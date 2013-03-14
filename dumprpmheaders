@@ -1,0 +1,10 @@
+#!/usr/bin/perl -w
+
+open(F, '-|', 'rpm', '-qa', '--qf', '%{HEADERIMMUTABLE}\n') || die;
+while(my $rpm = <F>) {
+  chomp $rpm;
+  next if $rpm eq '(none)';
+  my $head = pack('H*', "8eade80100000000".$rpm);
+  print pack('N', length($head)).$head;
+}
+close F;
