@@ -937,6 +937,8 @@ static int rpmpkgEraseInternal(rpmpkgdb pkgdb, unsigned int pkgidx)
 		continue;
 	    if (slot->blkoff < blkoff)
 		continue;
+	    if (slot->blkoff < pkgdb->fileblks / 2)
+		continue;
 	    if (slot->blkcnt > blkcnt)
 		continue;
 	    rpmpkgMoveblob(pkgdb, slot, blkoff);
@@ -957,9 +959,11 @@ static int rpmpkgEraseInternal(rpmpkgdb pkgdb, unsigned int pkgidx)
 	blkoff = slot->blkoff + slot->blkcnt;
     else
 	blkoff = pkgdb->slotnpages * (PAGE_SIZE / BLK_SIZE);
-    if (blkoff < pkgdb->fileblks) {
-	if (!ftruncate(pkgdb->fd, blkoff * BLK_SIZE)) {
-	    pkgdb->fileblks = blkoff;
+    if (blkoff < pkgdb->fileblks / 4 * 3) {
+	if (!rpmpkgValidatezero(pkgdb, blkoff, pkgdb->fileblks - blkoff)) {
+	    if (!ftruncate(pkgdb->fd, blkoff * BLK_SIZE)) {
+		pkgdb->fileblks = blkoff;
+	    }
 	}
     }
     free(pkgdb->slots);
