@@ -12,6 +12,12 @@ int rpmpkgList(rpmpkgdb pkgdb, unsigned int **pkgidxlistp, unsigned int *npkgidx
 int rpmpkgLock(rpmpkgdb pkgdb, int excl);
 int rpmpkgUnlock(rpmpkgdb pkgdb, int excl);
 
+int rpmpkgNextPkgIdx(rpmpkgdb pkgdb, unsigned int *pkgidxp);
+
+int rpmpkgGetIdxGeneration(rpmpkgdb pkgdb, unsigned int *generationp);
+int rpmpkgSetIdxGeneration(rpmpkgdb pkgdb);
+int rpmpkgClearIdxGeneration(rpmpkgdb pkgdb);
+
 int rpmpkgGetLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char **blobp, unsigned int *bloblp);
 int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned int blobl);
 

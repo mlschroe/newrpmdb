@@ -10,3 +10,6 @@ int rpmidxGet(rpmidxdb idxdb, char *key, unsigned int **pkgidxlist, unsigned int
 int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
 int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
 int rpmidxList(rpmidxdb idxdb, char ***keylistp, unsigned int *nkeylistp);
+
+int rpmidxUpdateGeneration(rpmidxdb idxdb);
+

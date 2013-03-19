@@ -71,7 +71,7 @@ static inline void h2be(unsigned int x, unsigned char *p)
  * keyexcess
  */
 
-static int rpmidxReadheader(rpmidxdb idxdb)
+static int rpmidxReadHeader(rpmidxdb idxdb)
 {
     struct stat stb;
 
@@ -115,7 +115,7 @@ static int rpmidxReadheader(rpmidxdb idxdb)
     return RPMRC_OK;
 }
 
-static int rpmidxWriteheader(rpmidxdb idxdb)
+static int rpmidxWriteHeader(rpmidxdb idxdb)
 {
     if (!idxdb->mapped)
 	return RPMRC_FAIL;
@@ -203,9 +203,26 @@ static inline int equalkey(rpmidxdb idxdb, unsigned int off, char *key, int keyl
     return 1;
 }
 
+static int createempty(rpmidxdb idxdb, off_t off, size_t size)
+{
+    char buf[4096];
+    memset(buf, 0, sizeof(buf));
+    while (size >= 4096) {
+	if (pwrite(idxdb->fd, buf, 4096, off) != 4096)
+	    return RPMRC_FAIL;
+	off += 4096;
+	size -= 4096;
+    }
+    if (size > 0 && pwrite(idxdb->fd, buf, size , off) != size)
+	return RPMRC_FAIL;
+    return RPMRC_OK;
+}
+
 static int addkeypage(rpmidxdb idxdb) {
     unsigned char *newaddr;
-    if (ftruncate(idxdb->fd, idxdb->mappedlen + idxdb->pagesize))
+
+    /* we don't use ftruncate because we want to create a "backed" page */
+    if (createempty(idxdb, idxdb->mappedlen, idxdb->pagesize))
 	return RPMRC_FAIL;
     newaddr = mremap(idxdb->mapped, idxdb->mappedlen, idxdb->mappedlen + idxdb->pagesize, MREMAP_MAYMOVE);
     if (newaddr == MAP_FAILED)
@@ -365,7 +382,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     nidxdb->xmask = xmask;
     nidxdb->keystart = nidxdb->slotstart + slotsize;
     keyend = nidxdb->keystart + 1 + 1;
-    if (ftruncate(nidxdb->fd, nidxdb->mappedlen)) {
+    if (createempty(nidxdb, 0, nidxdb->mappedlen)) {
 	close(nidxdb->fd);
 	unlink(tmpname);
 	return RPMRC_FAIL;
@@ -410,7 +427,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     }
     free(done);
     nidxdb->keyend = keyend;
-    rpmidxWriteheader(nidxdb);
+    rpmidxWriteHeader(nidxdb);
     munmap(nidxdb->mapped, nidxdb->mappedlen);
     keyend = (keyend + 2 * nidxdb->pagesize) & ~(nidxdb->pagesize - 1);
     ftruncate(nidxdb->fd, keyend);
@@ -424,11 +441,12 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     idxdb->mapped = 0;
     idxdb->mappedlen = 0;
     idxdb->fd = nidxdb->fd;
-    if (rpmidxReadheader(idxdb))
+    if (rpmidxReadHeader(idxdb))
 	return RPMRC_FAIL;
     return RPMRC_OK;
 }
 
+/* check if we need to rebuild the index */
 static int rpmidxCheck(rpmidxdb idxdb)
 {
     if (idxdb->usedslots * 2 > idxdb->nslots ||
@@ -489,7 +507,7 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
 	if (addnewkey(idxdb, key, keyl, &keyoff)) {
 	    return RPMRC_FAIL;
 	}
-	/* addnewkey may have changed the mapping! */
+	/* re-calculate ent, addnewkey may have changed the mapping! */
 	ent = idxdb->mapped + idxdb->slotstart + 8 * h;
     }
     if (freeh == -1) {
@@ -498,7 +516,8 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
     } else {
 	ent = idxdb->mapped + idxdb->slotstart + 8 * freeh;
     }
-    h2be(keyoff | (keyh & xmask), ent);
+    keyoff |= keyh & xmask;
+    h2be(keyoff, ent);
     h2be(data, ent + 4);
     if (ovldata)
 	h2be(ovldata, ent + idxdb->nslots * 8);
@@ -549,9 +568,11 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, u
 	    otherusers = 1;
 	    continue;
 	}
-	memset(ent, 255, 2 * sizeof(unsigned int));
+	/* convert entry to a dummy slot */
+	h2be(-1, ent);
+	h2be(-1, ent + 4);
 	if (ovldata)
-	    memset(ent + idxdb->nslots * 8, 0, sizeof(unsigned int));
+	    h2be(0, ent + idxdb->nslots * 8);
 	idxdb->dummyslots++;
 	updateDummyslots(idxdb);
 	/* continue searching */
@@ -748,7 +769,7 @@ int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nke
     }
     if (rpmpkgLock(idxdb->pkgdb, 1))
         return RPMRC_FAIL;
-    if (rpmidxReadheader(idxdb)) {
+    if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 1);
         return RPMRC_FAIL;
     }
@@ -767,7 +788,7 @@ int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int n
     }
     if (rpmpkgLock(idxdb->pkgdb, 1))
         return RPMRC_FAIL;
-    if (rpmidxReadheader(idxdb)) {
+    if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 1);
         return RPMRC_FAIL;
     }
@@ -785,7 +806,7 @@ int rpmidxGet(rpmidxdb idxdb, char *key, unsigned int **pkgidxlistp, unsigned in
     *pkgidxnump = 0;
     if (rpmpkgLock(idxdb->pkgdb, 0))
 	return RPMRC_FAIL;
-    if (rpmidxReadheader(idxdb)) {
+    if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 0);
         return RPMRC_FAIL;
     }
@@ -801,11 +822,32 @@ int rpmidxList(rpmidxdb idxdb, char ***keylistp, unsigned int *nkeylistp)
     *nkeylistp = 0;
     if (rpmpkgLock(idxdb->pkgdb, 0))
 	return RPMRC_FAIL;
-    if (rpmidxReadheader(idxdb)) {
+    if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 0);
         return RPMRC_FAIL;
     }
     rc = rpmidxListInternal(idxdb, keylistp, nkeylistp);
     rpmpkgUnlock(idxdb->pkgdb, 0);
     return rc;
+}
+
+int rpmidxUpdateGeneration(rpmidxdb idxdb)
+{
+    unsigned int generation;
+    if (rpmpkgLock(idxdb->pkgdb, 1))
+	return RPMRC_FAIL;
+    if (rpmidxReadHeader(idxdb)) {
+	rpmpkgUnlock(idxdb->pkgdb, 1);
+        return RPMRC_FAIL;
+    }
+    if (rpmpkgGetIdxGeneration(idxdb->pkgdb, &generation)) {
+	rpmpkgUnlock(idxdb->pkgdb, 1);
+        return RPMRC_FAIL;
+    }
+    if (idxdb->generation != generation) {
+	idxdb->generation = generation;
+	updateGeneration(idxdb);
+    }
+    rpmpkgUnlock(idxdb->pkgdb, 1);
+    return RPMRC_OK;
 }
