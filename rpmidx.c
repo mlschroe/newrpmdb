@@ -386,12 +386,14 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     if (createempty(nidxdb, 0, nidxdb->mappedlen)) {
 	close(nidxdb->fd);
 	unlink(tmpname);
+	free(tmpname);
 	return RPMRC_FAIL;
     }
     nidxdb->mapped = mmap(0, nidxdb->mappedlen, PROT_READ | PROT_WRITE, MAP_SHARED, nidxdb->fd, 0);
     if (nidxdb->mapped == MAP_FAILED) {
 	close(nidxdb->fd);
 	unlink(tmpname);
+	free(tmpname);
 	return RPMRC_FAIL;
     }
     nidxdb->mapped[nidxdb->keystart] = 255;	/* empty string not yet in use */
@@ -400,6 +402,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	munmap(nidxdb->mapped, nidxdb->mappedlen);
 	close(nidxdb->fd);
 	unlink(tmpname);
+	free(tmpname);
 	return RPMRC_FAIL;
     }
     for (i = 0, ent = idxdb->mapped + idxdb->slotstart; i < idxdb->nslots; i++, ent += 8) {
@@ -434,9 +437,11 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     ftruncate(nidxdb->fd, keyend);
     if (rename(tmpname, idxdb->filename)) {
 	close(nidxdb->fd);
-	unlink(idxdb->filename);
+	unlink(tmpname);
+	free(tmpname);
 	return RPMRC_FAIL;
     }
+    free(tmpname);
     if (idxdb->mapped)
         munmap(idxdb->mapped, idxdb->mappedlen);
     idxdb->mapped = 0;
@@ -770,8 +775,12 @@ int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nke
         return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
-	if (keys[i])
-	    rpmidxPutInternal(idxdb, pkgidx, keys[i], i);
+	if (!keys[i])
+	    continue;
+	if (rpmidxPutInternal(idxdb, pkgidx, keys[i], i)) {
+	    rpmpkgUnlock(idxdb->pkgdb, 1);
+	    return RPMRC_FAIL;
+	}
     }
     rpmpkgUnlock(idxdb->pkgdb, 1);
     return RPMRC_OK;
@@ -790,8 +799,12 @@ int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int n
         return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
-	if (keys[i])
-	    rpmidxEraseInternal(idxdb, pkgidx, keys[i], i);
+	if (!keys[i])
+	    continue;
+	if (rpmidxEraseInternal(idxdb, pkgidx, keys[i], i)) {
+	    rpmpkgUnlock(idxdb->pkgdb, 1);
+	    return RPMRC_FAIL;
+	}
     }
     rpmpkgUnlock(idxdb->pkgdb, 1);
     return RPMRC_OK;
