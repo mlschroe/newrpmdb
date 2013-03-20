@@ -774,7 +774,8 @@ int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nke
         return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
-	rpmidxPutInternal(idxdb, pkgidx, keys[i], i);
+	if (keys[i])
+	    rpmidxPutInternal(idxdb, pkgidx, keys[i], i);
     }
     rpmpkgUnlock(idxdb->pkgdb, 1);
     return RPMRC_OK;
@@ -793,7 +794,8 @@ int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int n
         return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
-	rpmidxEraseInternal(idxdb, pkgidx, keys[i], i);
+	if (keys[i])
+	    rpmidxEraseInternal(idxdb, pkgidx, keys[i], i);
     }
     rpmpkgUnlock(idxdb->pkgdb, 1);
     return RPMRC_OK;

@@ -6,6 +6,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
+#include <time.h>
 #include "rpmpkg.h"
 #include "rpmidx.h"
 
@@ -111,12 +112,36 @@ struct idb {
   { "Basenames.db", 0, TAG_BASENAMES, 1 },
   { "Name.db", 0, TAG_NAME, 0 },
   { "Provides.db", 0, TAG_PROVIDENAME, 1 },
-  { "Requires.db", 0, TAG_REQUIRENAME, 1 },
+  { "Requires.db", 0, TAG_REQUIRENAME, 2 },
   { "Conflicts.db", 0, TAG_CONFLICTNAME, 1 },
   { "Obsoletes.db", 0, TAG_OBSOLETENAME, 1 },
   { "Triggers.db", 0, TAG_TRIGGERNAME, 1 },
+  { "Filerequires.db", 0, TAG_REQUIRENAME, 3 },
   { 0, 0, 0, 0 }
 };
+
+void filterheadelements(char **ell, int cnt, int type)
+{
+  int i;
+  for (i = 0; i < cnt; i++)
+    {
+      char *el = ell[i];
+      switch(type)
+	{
+	case 2:
+	  /* crude imitation of looking at the sense flags */
+	  if (!strncmp(el, "rpmlib(", 7))
+	    ell[i] = 0;
+	  break;
+	case 3:
+	  if (*el != '/')
+	    ell[i] = 0;
+	  break;
+	default:
+	  break;
+	}
+    }
+}
 
 /* assumes we don't overwrite! */
 void
@@ -148,6 +173,8 @@ writeheader(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned i
 	}
       if (bn && cnt)
 	{
+	  if (myidbs[i].isarray > 1)
+	    filterheadelements(bn, cnt, myidbs[i].isarray);
 	  if (rpmidxPut(myidbs[i].idxdb, pkgidx, bn, cnt))
 	    {
 	      perror("rpmidxPut");
@@ -198,6 +225,8 @@ eraseheader(rpmpkgdb pkgdb, unsigned int pkgidx)
 	    }
 	  if (bn && cnt)
 	    {
+	      if (myidbs[i].isarray > 1)
+		filterheadelements(bn, cnt, myidbs[i].isarray);
 	      if (rpmidxErase(myidbs[i].idxdb, pkgidx, bn, cnt))
 		{
 		  perror("rpmidxErase");
@@ -335,6 +364,7 @@ main()
   unsigned int now;
   rpmpkgdb pkgdb;
 
+  srandom((unsigned int)time(0) + (unsigned int)getpid() * 50);
   printf("reading headers\n");
   hdrs = calloc(3000, sizeof(struct hdr));
   for (i = 0; i < 3000; i++)
@@ -384,11 +414,11 @@ main()
   /* disable fsync */
   rpmpkgSetFsync(pkgdb, 0);
 
+  shuffle();
 #if 0
   drop_caches();
-  shuffle();
-  printf("writing into database\n");
 #endif
+
   now = timems(0);
   
   for (i = 0; i < nhdrs; i++)
