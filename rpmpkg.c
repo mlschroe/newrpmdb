@@ -1128,6 +1128,34 @@ int rpmpkgClearIdxGeneration(rpmpkgdb pkgdb)
     return RPMRC_OK;
 }
 
+int rpmpkgStats(rpmpkgdb pkgdb)
+{
+    unsigned int usedblks = 0;
+    int i;
+
+    if (rpmpkgLock(pkgdb, 0))
+	return RPMRC_FAIL;
+    if (rpmpkgReadHeader(pkgdb)) {
+	rpmpkgUnlock(pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    if (rpmpkgReadSlots(pkgdb)) {
+	return RPMRC_FAIL;
+    }
+    for (i = 0; i < pkgdb->nslots; i++)
+	usedblks += pkgdb->slots[i].blkcnt;
+    printf("--- Package DB Stats\n");
+    printf("Filename: %s\n", pkgdb->filename);
+    printf("Generation: %d\n", pkgdb->generation);
+    printf("Slot pages: %d\n", pkgdb->slotnpages);
+    printf("Used slots: %d\n", pkgdb->nslots);
+    printf("Free slots: %d\n", pkgdb->slotnpages * (PAGE_SIZE / SLOT_SIZE) - pkgdb->nslots);
+    printf("Blob area size: %d\n", (pkgdb->fileblks - pkgdb->slotnpages * (PAGE_SIZE / BLK_SIZE)) * BLK_SIZE);
+    printf("Blob area used: %d\n", usedblks * BLK_SIZE);
+    rpmpkgUnlock(pkgdb, 0);
+    return RPMRC_OK;
+}
+
 #if 1
 
 #include "lzo/lzoconf.h"

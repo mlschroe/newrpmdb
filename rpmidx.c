@@ -310,6 +310,7 @@ static inline void updatenew(rpmidxdb idxdb, unsigned int keyh, unsigned int new
     h2be(data, ent + 4);
     if (ovldata)
         h2be(ovldata, ent + idxdb->nslots * 8);
+    idxdb->usedslots++;
 }
 
 /* copy all entries belonging to a single key from the old database into the new database */
@@ -850,6 +851,27 @@ int rpmidxUpdateGeneration(rpmidxdb idxdb)
 	idxdb->generation = generation;
 	updateGeneration(idxdb);
     }
+    rpmpkgUnlock(idxdb->pkgdb, 1);
+    return RPMRC_OK;
+}
+
+int rpmidxStats(rpmidxdb idxdb)
+{
+    if (rpmpkgLock(idxdb->pkgdb, 0))
+	return RPMRC_FAIL;
+    if (rpmidxReadHeader(idxdb)) {
+	rpmpkgUnlock(idxdb->pkgdb, 0);
+        return RPMRC_FAIL;
+    }
+    printf("--- IndexDB Stats\n");
+    printf("Filename: %s\n", idxdb->filename);
+    printf("Generation: %u\n", idxdb->generation);
+    printf("Slots: %u\n", idxdb->nslots);
+    printf("Used slots: %u\n", idxdb->usedslots);
+    printf("Dummy slots: %u\n", idxdb->dummyslots);
+    printf("Key data size: %u\n", idxdb->keyend - idxdb->keystart);
+    printf("Key excess: %u\n", idxdb->keyexcess);
+    printf("XMask : 0x%08x\n", idxdb->xmask);
     rpmpkgUnlock(idxdb->pkgdb, 1);
     return RPMRC_OK;
 }

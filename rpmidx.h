@@ -12,4 +12,5 @@ int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int n
 int rpmidxList(rpmidxdb idxdb, char ***keylistp, unsigned int *nkeylistp);
 
 int rpmidxUpdateGeneration(rpmidxdb idxdb);
+int rpmidxStats(rpmidxdb idxdb);
 

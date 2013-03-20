@@ -18,6 +18,8 @@ int rpmpkgGetIdxGeneration(rpmpkgdb pkgdb, unsigned int *generationp);
 int rpmpkgSetIdxGeneration(rpmpkgdb pkgdb);
 int rpmpkgClearIdxGeneration(rpmpkgdb pkgdb);
 
+int rpmpkgStats(rpmpkgdb pkgdb);
+
 int rpmpkgGetLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char **blobp, unsigned int *bloblp);
 int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned int blobl);
 

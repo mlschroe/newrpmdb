@@ -356,6 +356,15 @@ renumber(int offset)
     hdrs[i].idx = i + 1 + offset;
 }
 
+void
+stats(rpmpkgdb pkgdb)
+{
+  int i;
+  rpmpkgStats(pkgdb);
+  for (i = 0; myidbs[i].name; i++)
+    rpmidxStats(myidbs[i].idxdb);
+}
+
 int
 main()
 {
@@ -437,6 +446,9 @@ main()
 
   lookup_basename(pkgdb, "screen");
   list_conflicts(pkgdb);
+#if 0
+  stats(pkgdb);
+#endif
 
   drop_caches();
   shuffle();
@@ -512,6 +524,9 @@ main()
 #endif
 #endif
   printf("upgrade took %d ms\n", timems(now));
+#if 0
+  stats(pkgdb);
+#endif
 
   printf("erasing all packages\n");
   shuffle();
@@ -529,6 +544,9 @@ main()
 #endif
     }
   printf("erase took %d ms\n", timems(now));
+#if 0
+  stats(pkgdb);
+#endif
 
   exit(0);
 }
