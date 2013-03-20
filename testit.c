@@ -116,7 +116,9 @@ struct idb {
   { "Conflicts.db", 0, TAG_CONFLICTNAME, 1 },
   { "Obsoletes.db", 0, TAG_OBSOLETENAME, 1 },
   { "Triggers.db", 0, TAG_TRIGGERNAME, 1 },
+#if 0
   { "Filerequires.db", 0, TAG_REQUIRENAME, 3 },
+#endif
   { 0, 0, 0, 0 }
 };
 

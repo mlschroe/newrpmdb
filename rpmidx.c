@@ -471,6 +471,8 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
     unsigned char *ent;
     unsigned int data, ovldata;
 
+    if (datidx >= 0x80000000)
+	return RPMRC_FAIL;
     rpmidxCheck(idxdb);
     data = encodedata(idxdb, pkgidx, datidx, &ovldata);
     hmask = idxdb->hmask;
@@ -488,11 +490,8 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
 	    continue;
 	x &= ~xmask;
 	if (!keyoff) {
-	    int r = equalkey(idxdb, x, key, keyl);
-	    if (r == 0)
+	    if (!equalkey(idxdb, x, key, keyl))
 		continue;
-	    if (r < 0)
-		    return RPMRC_FAIL;
 	    keyoff = x;
 	}
 	if (keyoff != x)
@@ -536,6 +535,8 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, u
     int otherusers = 0;
     unsigned int data, ovldata;
 
+    if (datidx >= 0x80000000)
+	return RPMRC_FAIL;
     rpmidxCheck(idxdb);
     data = encodedata(idxdb, pkgidx, datidx, &ovldata);
     hmask = idxdb->hmask;
@@ -551,11 +552,8 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, u
 	    continue;
 	x &= ~xmask;
 	if (!keyoff) {
-	    int r = equalkey(idxdb, x, key, keyl);
-	    if (r == 0)
+	    if (!equalkey(idxdb, x, key, keyl))
 		continue;
-	    if (r < 0)
-		    return RPMRC_FAIL;
 	    keyoff = x;
 	}
 	if (keyoff != x)
@@ -614,11 +612,8 @@ static int rpmidxGetInternal(rpmidxdb idxdb, char *key, unsigned int **pkgidxlis
 	    continue;
 	x &= ~xmask;
 	if (!keyoff) {
-	    int r = equalkey(idxdb, x, key, keyl);
-	    if (r == 0)
+	    if (!equalkey(idxdb, x, key, keyl))
 		continue;
-	    if (r < 0)
-		    return RPMRC_FAIL;
 	    keyoff = x;
 	}
 	if (keyoff != x)
