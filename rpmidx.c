@@ -761,6 +761,8 @@ void rpmidxClose(rpmidxdb idxdb)
         close(idxdb->fd);
         idxdb->fd = -1; 
     }   
+    free(idxdb->filename);
+    free(idxdb);
 }
 int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
 {

@@ -238,6 +238,7 @@ eraseheader(rpmpkgdb pkgdb, unsigned int pkgidx)
 	  if (bn && bn != s)
 	    free(bn);
 	}
+      free(blob);
       if (rpmpkgErase(pkgdb, pkgidx))
 	{
 	  perror("rpmpkgErase");
@@ -470,6 +471,7 @@ main()
 	  perror("rpmpkgGet: wrong header");
 	  exit(1);
 	}
+      free(blob);
     }
   printf("reading took %d ms\n", timems(now));
 
@@ -549,6 +551,14 @@ main()
 #if 0
   stats(pkgdb);
 #endif
+
+  for (i = 0; myidbs[i].name; i++)
+    rpmidxClose(myidbs[i].idxdb);
+  rpmpkgClose(pkgdb);
+
+  for (i = 0; i < nhdrs; i++)
+    free(hdrs[i].blob);
+  free(hdrs);
 
   exit(0);
 }

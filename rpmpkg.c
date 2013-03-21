@@ -349,7 +349,7 @@ static int rpmpkgWriteslot(rpmpkgdb pkgdb, unsigned int slotno, unsigned int pkg
 {
     unsigned char buf[SLOT_SIZE];
     /* sanity */
-    if (slotno < 2)
+    if (slotno < SLOT_START)
 	return RPMRC_FAIL;
     if (blkoff && slotno == pkgdb->freeslot)
 	pkgdb->freeslot = 0;
@@ -551,13 +551,13 @@ static int rpmpkgWriteblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blk
     /* pad if needed */
     pad = blkcnt * BLK_SIZE - (BLOBHEAD_SIZE + blobl + BLOBTAIL_SIZE);
     if (pad) {
-	memset(buf, 0, pad);
-	adl = update_adler32(adl, buf, pad);
+	memset(buf + (sizeof(buf) - BLOBTAIL_SIZE) - pad, 0, pad);
+	adl = update_adler32(adl, buf + (sizeof(buf) - BLOBTAIL_SIZE) - pad, pad);
     }
-    h2be(adl, buf + pad);
-    h2be(blobl, buf + pad + 4);
-    h2be(BLOBTAIL_MAGIC, buf + pad + 8);
-    if (pwrite(pkgdb->fd, buf, pad + BLOBTAIL_SIZE, fileoff) != pad + BLOBTAIL_SIZE) {
+    h2be(adl, buf + (sizeof(buf) - BLOBTAIL_SIZE));
+    h2be(blobl, buf + (sizeof(buf) - BLOBTAIL_SIZE) + 4);
+    h2be(BLOBTAIL_MAGIC, buf + (sizeof(buf) - BLOBTAIL_SIZE) + 8);
+    if (pwrite(pkgdb->fd, buf + (sizeof(buf) - BLOBTAIL_SIZE) - pad, pad + BLOBTAIL_SIZE, fileoff) != pad + BLOBTAIL_SIZE) {
 	return RPMRC_FAIL;	/* write error */
     }
     /* update file length */
@@ -808,6 +808,8 @@ void rpmpkgClose(rpmpkgdb pkgdb)
     if (pkgdb->slothash)
 	free(pkgdb->slothash);
     pkgdb->slothash = 0;
+    free(pkgdb->filename);
+    free(pkgdb);
 }
 
 void rpmpkgSetFsync(rpmpkgdb pkgdb, int dofsync)
