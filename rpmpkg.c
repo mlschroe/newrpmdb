@@ -994,6 +994,10 @@ static int rpmpkgListInternal(rpmpkgdb pkgdb, unsigned int **pkgidxlistp, unsign
     if (!pkgdb->slots && rpmpkgReadSlots(pkgdb)) {
 	return RPMRC_FAIL;
     }
+    if (!pkgidxlistp) {
+	*npkgidxlistp = pkgdb->nslots;
+	return RPMRC_OK;
+    }
     rpmpkgOrderSlots(pkgdb, SLOTORDER_BLKOFF);
     nslots = pkgdb->nslots;
     pkgidxlist = calloc(nslots + 1, sizeof(unsigned int));
@@ -1053,7 +1057,8 @@ int rpmpkgErase(rpmpkgdb pkgdb, unsigned int pkgidx)
 int rpmpkgList(rpmpkgdb pkgdb, unsigned int **pkgidxlistp, unsigned int *npkgidxlistp)
 {
     int rc;
-    *pkgidxlistp = 0;
+    if (pkgidxlistp)
+	*pkgidxlistp = 0;
     *npkgidxlistp = 0;
     if (rpmpkgLock(pkgdb, 0))
 	return RPMRC_FAIL;
