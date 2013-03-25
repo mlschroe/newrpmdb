@@ -72,7 +72,7 @@ static inline void h2lea(unsigned int x, unsigned char *p)
 
 /*** Header management ***/
 
-#define IDXDB_MAGIC     ('R' << 24 | 'p' << 16 | 'm' << 8 | 'I')
+#define IDXDB_MAGIC     ('R' | 'p' << 8 | 'm' << 16 | 'I' << 24)
 
 /* header
  * generation

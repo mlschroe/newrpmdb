@@ -92,7 +92,7 @@ unsigned int update_adler32(unsigned int adler, unsigned char *buf, unsigned int
 
 /*** Header management ***/
 
-#define PKGDB_MAGIC	('R' << 24 | 'p' << 16 | 'm' << 8 | 'P')
+#define PKGDB_MAGIC	('R' | 'p' << 8 | 'm' << 16 | 'P' << 24)
 
 static int rpmpkgReadHeader(rpmpkgdb pkgdb)
 {
@@ -142,7 +142,7 @@ static int rpmpkgWriteHeader(rpmpkgdb pkgdb)
 
 /*** Slot management ***/
 
-#define SLOT_MAGIC	('S' << 24 | 'l' << 16 | 'o' << 8 | 't')
+#define SLOT_MAGIC	('S' | 'l' << 8 | 'o' << 16 | 't' << 24)
 
 #define SLOT_SIZE 16
 #define BLK_SIZE  16
@@ -446,8 +446,8 @@ static int rpmpkgValidateZero(rpmpkgdb pkgdb, unsigned int blkoff, unsigned int 
 /* head: magic + pkgidx + timestamp + bloblen */
 /* tail: adler32 + bloblen + magic */
 
-#define BLOBHEAD_MAGIC	('B' << 24 | 'l' << 16 | 'b' << 8 | 'S')
-#define BLOBTAIL_MAGIC	('B' << 24 | 'l' << 16 | 'b' << 8 | 'E')
+#define BLOBHEAD_MAGIC	('B' | 'l' << 8 | 'b' << 16 | 'S' << 24)
+#define BLOBTAIL_MAGIC	('B' | 'l' << 8 | 'b' << 16 | 'E' << 24)
 
 #define BLOBHEAD_SIZE	(4 + 4 + 4 + 4)
 #define BLOBTAIL_SIZE	(4 + 4 + 4)
