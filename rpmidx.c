@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <sys/mman.h>
 
+#include <endian.h>
+
 #include "rpmidx.h"
 
 #define RPMRC_FAIL 1
@@ -43,17 +45,29 @@ typedef struct rpmidxdb_s {
     unsigned int xmask;
 } * rpmidxdb;
 
-static inline unsigned int be2h(unsigned char *p) 
+static inline unsigned int le2h(unsigned char *p) 
 {
-    return p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
+    return p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24;
 }
 
-static inline void h2be(unsigned int x, unsigned char *p) 
+static inline void h2le(unsigned int x, unsigned char *p) 
 {
-    p[0] = x >> 24; 
-    p[1] = x >> 16; 
-    p[2] = x >> 8;
-    p[3] = x;
+    p[0] = x;
+    p[1] = x >> 8; 
+    p[2] = x >> 16;
+    p[3] = x >> 24;
+}
+
+/* aligned versions */
+static inline unsigned int le2ha(unsigned char *p) 
+{
+    unsigned int x = *(unsigned int *)p;
+    return le32toh(x);
+}
+
+static inline void h2lea(unsigned int x, unsigned char *p) 
+{
+    *(unsigned int *)p = htole32(x);
 }
 
 /*** Header management ***/
@@ -76,7 +90,7 @@ static int rpmidxReadHeader(rpmidxdb idxdb)
     struct stat stb;
 
     if (idxdb->mapped) {
-	if (be2h(idxdb->mapped + 4) == idxdb->generation) {
+	if (le2ha(idxdb->mapped + 4) == idxdb->generation) {
 	    return RPMRC_OK;
 	}
 	munmap(idxdb->mapped, idxdb->mappedlen);
@@ -94,22 +108,22 @@ static int rpmidxReadHeader(rpmidxdb idxdb)
 	idxdb->mapped = 0;
 	return RPMRC_FAIL;
     }
-    if (be2h(idxdb->mapped) != IDXDB_MAGIC) {
+    if (le2ha(idxdb->mapped) != IDXDB_MAGIC) {
 	munmap(idxdb->mapped, stb.st_size);
 	idxdb->mapped = 0;
 	return RPMRC_FAIL;
     }
     idxdb->mappedlen = stb.st_size;
 
-    idxdb->generation = be2h(idxdb->mapped + 4);
-    idxdb->slotstart  = be2h(idxdb->mapped + 8);
-    idxdb->nslots     = be2h(idxdb->mapped + 12);
-    idxdb->usedslots  = be2h(idxdb->mapped + 16);
-    idxdb->dummyslots = be2h(idxdb->mapped + 20);
-    idxdb->xmask      = be2h(idxdb->mapped + 24);
-    idxdb->keystart   = be2h(idxdb->mapped + 28);
-    idxdb->keyend     = be2h(idxdb->mapped + 32);
-    idxdb->keyexcess  = be2h(idxdb->mapped + 36);
+    idxdb->generation = le2ha(idxdb->mapped + 4);
+    idxdb->slotstart  = le2ha(idxdb->mapped + 8);
+    idxdb->nslots     = le2ha(idxdb->mapped + 12);
+    idxdb->usedslots  = le2ha(idxdb->mapped + 16);
+    idxdb->dummyslots = le2ha(idxdb->mapped + 20);
+    idxdb->xmask      = le2ha(idxdb->mapped + 24);
+    idxdb->keystart   = le2ha(idxdb->mapped + 28);
+    idxdb->keyend     = le2ha(idxdb->mapped + 32);
+    idxdb->keyexcess  = le2ha(idxdb->mapped + 36);
 
     idxdb->hmask = idxdb->nslots - 1;
     return RPMRC_OK;
@@ -119,42 +133,42 @@ static int rpmidxWriteHeader(rpmidxdb idxdb)
 {
     if (!idxdb->mapped)
 	return RPMRC_FAIL;
-    h2be(IDXDB_MAGIC,       idxdb->mapped);
-    h2be(idxdb->generation, idxdb->mapped + 4);
-    h2be(idxdb->slotstart,  idxdb->mapped + 8);
-    h2be(idxdb->nslots,     idxdb->mapped + 12);
-    h2be(idxdb->usedslots,  idxdb->mapped + 16);
-    h2be(idxdb->dummyslots, idxdb->mapped + 20);
-    h2be(idxdb->xmask,      idxdb->mapped + 24);
-    h2be(idxdb->keystart,   idxdb->mapped + 28);
-    h2be(idxdb->keyend,     idxdb->mapped + 32);
-    h2be(idxdb->keyexcess,  idxdb->mapped + 36);
+    h2lea(IDXDB_MAGIC,       idxdb->mapped);
+    h2lea(idxdb->generation, idxdb->mapped + 4);
+    h2lea(idxdb->slotstart,  idxdb->mapped + 8);
+    h2lea(idxdb->nslots,     idxdb->mapped + 12);
+    h2lea(idxdb->usedslots,  idxdb->mapped + 16);
+    h2lea(idxdb->dummyslots, idxdb->mapped + 20);
+    h2lea(idxdb->xmask,      idxdb->mapped + 24);
+    h2lea(idxdb->keystart,   idxdb->mapped + 28);
+    h2lea(idxdb->keyend,     idxdb->mapped + 32);
+    h2lea(idxdb->keyexcess,  idxdb->mapped + 36);
     return RPMRC_OK;
 }
 
 static inline void updateGeneration(rpmidxdb idxdb)
 {
-   h2be(idxdb->generation, idxdb->mapped + 4);
+   h2lea(idxdb->generation, idxdb->mapped + 4);
 }
 
 static inline void updateKeyend(rpmidxdb idxdb)
 {
-   h2be(idxdb->keyend, idxdb->mapped + 32);
+   h2lea(idxdb->keyend, idxdb->mapped + 32);
 }
 
 static inline void updateKeyexcess(rpmidxdb idxdb)
 {
-   h2be(idxdb->keyexcess, idxdb->mapped + 36);
+   h2lea(idxdb->keyexcess, idxdb->mapped + 36);
 }
 
 static inline void updateUsedslots(rpmidxdb idxdb)
 {
-   h2be(idxdb->usedslots, idxdb->mapped + 16);
+   h2lea(idxdb->usedslots, idxdb->mapped + 16);
 }
 
 static inline void updateDummyslots(rpmidxdb idxdb)
 {
-   h2be(idxdb->dummyslots, idxdb->mapped + 20);
+   h2lea(idxdb->dummyslots, idxdb->mapped + 20);
 }
 
 
@@ -301,15 +315,15 @@ static inline void updatenew(rpmidxdb idxdb, unsigned int keyh, unsigned int new
     /* find an empty slot */
     for (h = keyh & hmask;; h = (h + hh++) & hmask) {
 	ent = idxdb->mapped + idxdb->slotstart + 8 * h;
-	x = be2h(ent);
+	x = le2ha(ent);
 	if (x == 0)
 	    break;
     }
     /* write data */
-    h2be(newx, ent);
-    h2be(data, ent + 4);
+    h2lea(newx, ent);
+    h2lea(data, ent + 4);
     if (ovldata)
-        h2be(ovldata, ent + idxdb->nslots * 8);
+        h2lea(ovldata, ent + idxdb->nslots * 8);
     idxdb->usedslots++;
 }
 
@@ -325,13 +339,13 @@ static inline void updatekey(char *key, int keyl, rpmidxdb idxdb, unsigned int o
     for (h = keyh & hmask, hh = 7; ; h = (h + hh++) & hmask) {
 	unsigned char *ent = idxdb->mapped + idxdb->slotstart + 8 * h;
 	unsigned int data, ovldata;
-	unsigned int x = be2h(ent);
+	unsigned int x = le2ha(ent);
 	if (x == 0)
 	    break;
 	if (x != oldkeyoff)
 	    continue;
-	data = be2h(ent + 4);
-	ovldata = (data & 0x80000000) ? be2h(ent + idxdb->nslots * 8) : 0;
+	data = le2ha(ent + 4);
+	ovldata = (data & 0x80000000) ? le2ha(ent + idxdb->nslots * 8) : 0;
 	updatenew(nidxdb, keyh, newkeyoff, data, ovldata);
 	done[h >> 3] |= 1 << (h & 7);
     }
@@ -359,7 +373,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     /* don't trust usedslots and dummyslots */
     nslots = 0;
     for (i = 0, ent = idxdb->mapped + idxdb->slotstart; i < idxdb->nslots; i++, ent += 8) {
-	unsigned int x = be2h(ent);
+	unsigned int x = le2ha(ent);
 	if (x != 0 && x != -1)
 	    nslots++;
     }
@@ -406,7 +420,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	return RPMRC_FAIL;
     }
     for (i = 0, ent = idxdb->mapped + idxdb->slotstart; i < idxdb->nslots; i++, ent += 8) {
-	unsigned int x = be2h(ent);
+	unsigned int x = le2ha(ent);
 	char *key;
         int keyl;
 
@@ -484,7 +498,7 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
     xmask = idxdb->xmask;
     for (h = keyh & hmask;; h = (h + hh++) & hmask) {
 	ent = idxdb->mapped + idxdb->slotstart + 8 * h;
-	x = be2h(ent);
+	x = le2ha(ent);
 	if (x == 0)
 	    break;
 	if (x == -1) {
@@ -502,8 +516,8 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
 	if (keyoff != x)
 	    continue;
 	/* string matches, check data/ovldata */
-	if (be2h(ent + 4) == data) {
-	    if (!ovldata || be2h(ent + idxdb->nslots * 8) == ovldata)
+	if (le2ha(ent + 4) == data) {
+	    if (!ovldata || le2ha(ent + idxdb->nslots * 8) == ovldata)
 		return RPMRC_OK;	/* already in database */
 	}
 	/* continue searching */
@@ -522,10 +536,10 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
 	ent = idxdb->mapped + idxdb->slotstart + 8 * freeh;
     }
     keyoff |= keyh & xmask;
-    h2be(keyoff, ent);
-    h2be(data, ent + 4);
+    h2lea(keyoff, ent);
+    h2lea(data, ent + 4);
     if (ovldata)
-	h2be(ovldata, ent + idxdb->nslots * 8);
+	h2lea(ovldata, ent + idxdb->nslots * 8);
     return RPMRC_OK;
 }
 
@@ -548,7 +562,7 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, u
     xmask = idxdb->xmask;
     for (h = keyh & hmask; ; h = (h + hh++) & hmask) {
 	unsigned char *ent = idxdb->mapped + idxdb->slotstart + 8 * h;
-	x = be2h(ent);
+	x = le2ha(ent);
 	if (x == 0)
 	    break;
 	if (x == -1)
@@ -564,19 +578,19 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, u
 	if (keyoff != x)
 	    continue;
 	/* string matches, check data/ovldata */
-	if (be2h(ent + 4) != data) {
+	if (le2ha(ent + 4) != data) {
 	    otherusers = 1;
 	    continue;
 	}
-	if (ovldata && be2h(ent + idxdb->nslots * 8) != ovldata) {
+	if (ovldata && le2ha(ent + idxdb->nslots * 8) != ovldata) {
 	    otherusers = 1;
 	    continue;
 	}
 	/* convert entry to a dummy slot */
-	h2be(-1, ent);
-	h2be(-1, ent + 4);
+	h2lea(-1, ent);
+	h2lea(-1, ent + 4);
 	if (ovldata)
-	    h2be(0, ent + idxdb->nslots * 8);
+	    h2lea(0, ent + idxdb->nslots * 8);
 	idxdb->dummyslots++;
 	updateDummyslots(idxdb);
 	/* continue searching */
@@ -608,7 +622,7 @@ static int rpmidxGetInternal(rpmidxdb idxdb, char *key, unsigned int **pkgidxlis
     unsigned int *hits = 0;
     for (h = keyh & hmask; ; h = (h + hh++) & hmask) {
 	unsigned char *ent = idxdb->mapped + idxdb->slotstart + 8 * h;
-	x = be2h(ent);
+	x = le2ha(ent);
 	if (x == 0)
 	    break;
 	if (x == -1)
@@ -632,8 +646,8 @@ static int rpmidxGetInternal(rpmidxdb idxdb, char *key, unsigned int **pkgidxlis
 	    if (!hits)
 		return RPMRC_FAIL;
 	}
-	data = be2h(ent + 4);
-	ovldata = (data & 0x80000000) ? be2h(ent + idxdb->nslots * 8) : 0;
+	data = le2ha(ent + 4);
+	ovldata = (data & 0x80000000) ? le2ha(ent + idxdb->nslots * 8) : 0;
 	hits[nhits++] = decodedata(idxdb, data, ovldata, &datidx);
 	hits[nhits++] = datidx;
     }

@@ -54,17 +54,17 @@ typedef struct rpmpkgdb_s {
 #define SLOTORDER_BLKOFF	1
 
 
-static inline unsigned int be2h(unsigned char *p)
+static inline unsigned int le2h(unsigned char *p) 
 {
-    return p[0] << 24 | p[1] << 16 | p[2] << 8 | p[3];
+    return p[0] | p[1] << 8 | p[2] << 16 | p[3] << 24; 
 }
 
-static inline void h2be(unsigned int x, unsigned char *p)
+static inline void h2le(unsigned int x, unsigned char *p) 
 {
-    p[0] = x >> 24;
-    p[1] = x >> 16;
-    p[2] = x >> 8;
-    p[3] = x;
+    p[0] = x;
+    p[1] = x >> 8;  
+    p[2] = x >> 16; 
+    p[3] = x >> 24; 
 }
 
 /* adler 32 algorithm taken from RFC 1950 */
@@ -102,12 +102,12 @@ static int rpmpkgReadHeader(rpmpkgdb pkgdb)
     if (pread(pkgdb->fd, header, 32, 0) != 32) {
 	return RPMRC_FAIL;
     }
-    if (be2h(header) != PKGDB_MAGIC) {
+    if (le2h(header) != PKGDB_MAGIC) {
 	return RPMRC_FAIL;
     }
-    generation = be2h(header + 4);
-    slotnpages = be2h(header + 8);
-    nextpkgidx = be2h(header + 12);
+    generation = le2h(header + 4);
+    slotnpages = le2h(header + 8);
+    nextpkgidx = le2h(header + 12);
     /* free slots if our internal data no longer matches */
     if (pkgdb->slots && (pkgdb->generation != generation || pkgdb->slotnpages != slotnpages)) {
 	free(pkgdb->slots);
@@ -128,10 +128,10 @@ static int rpmpkgWriteHeader(rpmpkgdb pkgdb)
 {
     unsigned char header[32];
     memset(header, 0, sizeof(header));
-    h2be(PKGDB_MAGIC, header);
-    h2be(pkgdb->generation, header + 4);
-    h2be(pkgdb->slotnpages, header + 8);
-    h2be(pkgdb->nextpkgidx, header + 12);
+    h2le(PKGDB_MAGIC, header);
+    h2le(pkgdb->generation, header + 4);
+    h2le(pkgdb->slotnpages, header + 8);
+    h2le(pkgdb->nextpkgidx, header + 12);
     if (pwrite(pkgdb->fd, header, sizeof(header), 0) != sizeof(header)) {
 	return RPMRC_FAIL;
     }
@@ -238,17 +238,17 @@ static int rpmpkgReadSlots(rpmpkgdb pkgdb)
 	for (o = page ? 0 : SLOT_START * SLOT_SIZE; o < PAGE_SIZE; o += SLOT_SIZE, slotno++) {
 	    unsigned char *pp = pagebuf + o;
 	    unsigned int blkoff, blkcnt, pkgidx;
-	    if (be2h(pp) != SLOT_MAGIC) {
+	    if (le2h(pp) != SLOT_MAGIC) {
 		return RPMRC_FAIL;
 	    }
-	    blkoff = be2h(pp + 8);
+	    blkoff = le2h(pp + 8);
 	    if (!blkoff) {
 		if (!freeslot)
 		    freeslot = slotno;
 		continue;
 	    }
-	    pkgidx = be2h(pp + 4);
-	    blkcnt = be2h(pp + 12);
+	    pkgidx = le2h(pp + 4);
+	    blkcnt = le2h(pp + 12);
 	    slot->pkgidx = pkgidx;
 	    slot->blkoff = blkoff;
 	    slot->blkcnt = blkcnt;
@@ -353,10 +353,10 @@ static int rpmpkgWriteslot(rpmpkgdb pkgdb, unsigned int slotno, unsigned int pkg
 	return RPMRC_FAIL;
     if (blkoff && slotno == pkgdb->freeslot)
 	pkgdb->freeslot = 0;
-    h2be(SLOT_MAGIC, buf);
-    h2be(pkgidx, buf + 4);
-    h2be(blkoff, buf + 8);
-    h2be(blkcnt, buf + 12);
+    h2le(SLOT_MAGIC, buf);
+    h2le(pkgidx, buf + 4);
+    h2le(blkoff, buf + 8);
+    h2le(blkcnt, buf + 12);
     if (pwrite(pkgdb->fd, buf, sizeof(buf), slotno * SLOT_SIZE) != sizeof(buf)) {
 	return RPMRC_FAIL;
     }
@@ -373,7 +373,7 @@ static int rpmpkgWriteEmptySlotpage(rpmpkgdb pkgdb, int pageno)
     int i, off = pageno ? 0 : SLOT_START * SLOT_SIZE;
     memset(page, 0, sizeof(page));
     for (i = 0; i < PAGE_SIZE / SLOT_SIZE; i++)
-        h2be(SLOT_MAGIC, page + i * SLOT_SIZE);
+        h2le(SLOT_MAGIC, page + i * SLOT_SIZE);
     if (pwrite(pkgdb->fd, page, PAGE_SIZE - off, pageno * PAGE_SIZE + off) != PAGE_SIZE - off) {
 	return RPMRC_FAIL;
     }
@@ -466,12 +466,12 @@ static int rpmpkgReadblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blko
     fileoff = (off_t)blkoff * BLK_SIZE;
     if (pread(pkgdb->fd, buf, BLOBHEAD_SIZE, fileoff) != BLOBHEAD_SIZE)
 	return RPMRC_FAIL;	/* read error */
-    if (be2h(buf) != BLOBHEAD_MAGIC)
+    if (le2h(buf) != BLOBHEAD_MAGIC)
 	return RPMRC_FAIL;	/* bad blob */
-    if (be2h(buf + 4) != pkgidx)
+    if (le2h(buf + 4) != pkgidx)
 	return RPMRC_FAIL;	/* bad blob */
-    tstamp = be2h(buf + 8);
-    bloblen = be2h(buf + 12);
+    tstamp = le2h(buf + 8);
+    bloblen = le2h(buf + 12);
     if (blkcnt != (BLOBHEAD_SIZE + bloblen + BLOBTAIL_SIZE + BLK_SIZE - 1) / BLK_SIZE)
 	return RPMRC_FAIL;	/* bad blob */
     adl = ADLER32_INIT;
@@ -492,13 +492,13 @@ static int rpmpkgReadblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blko
     /* read trailer */
     if (pread(pkgdb->fd, buf, BLOBTAIL_SIZE, fileoff) != BLOBTAIL_SIZE)
 	return RPMRC_FAIL;	/* read error */
-    if (be2h(buf) != adl) {
+    if (le2h(buf) != adl) {
 	return RPMRC_FAIL;	/* bad blob, adler32 mismatch */
     }
-    if (be2h(buf + 4) != bloblen) {
+    if (le2h(buf + 4) != bloblen) {
 	return RPMRC_FAIL;	/* bad blob, bloblen mismatch */
     }
-    if (be2h(buf + 8) != BLOBTAIL_MAGIC) {
+    if (le2h(buf + 8) != BLOBTAIL_MAGIC) {
 	return RPMRC_FAIL;	/* bad blob */
     }
     if (bloblp)
@@ -527,10 +527,10 @@ static int rpmpkgWriteblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blk
     if (blkcnt != (BLOBHEAD_SIZE + blobl + BLOBTAIL_SIZE + BLK_SIZE - 1) / BLK_SIZE)
 	return RPMRC_FAIL;	/* blkcnt mismatch */
     fileoff = (off_t)blkoff * BLK_SIZE;
-    h2be(BLOBHEAD_MAGIC, buf);
-    h2be(pkgidx, buf + 4);
-    h2be(now, buf + 8);
-    h2be(blobl, buf + 12);
+    h2le(BLOBHEAD_MAGIC, buf);
+    h2le(pkgidx, buf + 4);
+    h2le(now, buf + 8);
+    h2le(blobl, buf + 12);
     if (pwrite(pkgdb->fd, buf, BLOBHEAD_SIZE, fileoff) != BLOBHEAD_SIZE) {
 	return RPMRC_FAIL;	/* write error */
     }
@@ -554,9 +554,9 @@ static int rpmpkgWriteblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blk
 	memset(buf + (sizeof(buf) - BLOBTAIL_SIZE) - pad, 0, pad);
 	adl = update_adler32(adl, buf + (sizeof(buf) - BLOBTAIL_SIZE) - pad, pad);
     }
-    h2be(adl, buf + (sizeof(buf) - BLOBTAIL_SIZE));
-    h2be(blobl, buf + (sizeof(buf) - BLOBTAIL_SIZE) + 4);
-    h2be(BLOBTAIL_MAGIC, buf + (sizeof(buf) - BLOBTAIL_SIZE) + 8);
+    h2le(adl, buf + (sizeof(buf) - BLOBTAIL_SIZE));
+    h2le(blobl, buf + (sizeof(buf) - BLOBTAIL_SIZE) + 4);
+    h2le(BLOBTAIL_MAGIC, buf + (sizeof(buf) - BLOBTAIL_SIZE) + 8);
     if (pwrite(pkgdb->fd, buf + (sizeof(buf) - BLOBTAIL_SIZE) - pad, pad + BLOBTAIL_SIZE, fileoff) != pad + BLOBTAIL_SIZE) {
 	return RPMRC_FAIL;	/* write error */
     }
@@ -1189,7 +1189,7 @@ int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsig
 	free(workmem);
 	return RPMRC_FAIL;
     }
-    h2be(blobl, lzoblob);
+    h2le(blobl, lzoblob);
     if (lzo1x_1_compress(blob, blobl, lzoblob + 4, &blobl2, workmem) != LZO_E_OK) {
 	free(workmem);
 	free(lzoblob);
@@ -1224,7 +1224,7 @@ int rpmpkgGetLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char **blobp, uns
 	free(lzoblob);
 	return RPMRC_FAIL;
     }
-    blobl = be2h(lzoblob);
+    blobl = le2h(lzoblob);
     blob = malloc(blobl ? blobl : 0);
     if (!blob) {
 	free(lzoblob);
