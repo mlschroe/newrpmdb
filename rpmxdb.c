@@ -122,6 +122,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     pagesize = le2ha((unsigned char *)header + 12);
     if (!slotnpages || !pagesize || stb.st_size % pagesize != 0)
 	return RPMRC_FAIL;
+    xdb->pagesize = pagesize;
     xdb->mapped = mmap(0, slotnpages * pagesize, PROT_READ | PROT_WRITE, MAP_SHARED, xdb->fd, 0);
     if (xdb->mapped == MAP_FAILED) {
 	xdb->mapped = 0;
@@ -170,6 +171,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     xdb->slots[0].pagecnt = slotnpages;
     lastslot = xdb->slots;
     for (i = 0; i < nused; i++, lastslot = slot) {
+	slot = usedslots[i];
 	if (lastslot->startpage + lastslot->pagecnt > slot->startpage) {
 	    free(xdb->slots);
 	    free(usedslots);
@@ -177,14 +179,13 @@ static int rpmxdbReadHeader(rpmxdb xdb)
 	    rpmxdbUnmap(xdb);
 	    return RPMRC_FAIL;
 	}
-	slot = usedslots[i];
 	lastslot->next = slot->slotno;
 	slot->prev = lastslot->slotno;
     }
     lastslot->next = xdb->nslots;
     xdb->slots[xdb->nslots].slotno = xdb->nslots;
     xdb->slots[xdb->nslots].prev = lastslot->slotno;
-    xdb->slots[xdb->nslots].startpage = stb.st_size / xdb->pagesize;
+    xdb->slots[xdb->nslots].startpage = stb.st_size / pagesize;
     free(usedslots);
     return RPMRC_OK;
 }
