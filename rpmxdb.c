@@ -97,7 +97,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
 {
     struct xdb_slot *slot;
     unsigned int header[4];
-    unsigned int slotnpages, pagesize;
+    unsigned int slotnpages, pagesize, generation;
     unsigned int page, *lastfreep;
     unsigned char *pageptr;
     struct xdb_slot **usedslots, *lastslot;
@@ -118,6 +118,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     }
     if (le2ha((unsigned char *)header) != XDB_MAGIC)
 	return RPMRC_FAIL;
+    generation = le2ha((unsigned char *)header + 4);
     slotnpages = le2ha((unsigned char *)header + 8);
     pagesize = le2ha((unsigned char *)header + 12);
     if (!slotnpages || !pagesize || stb.st_size % pagesize != 0)
@@ -187,6 +188,8 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     xdb->slots[xdb->nslots].prev = lastslot->slotno;
     xdb->slots[xdb->nslots].startpage = stb.st_size / pagesize;
     free(usedslots);
+    xdb->generation = generation;
+    xdb->slotnpages = slotnpages;
     return RPMRC_OK;
 }
 
