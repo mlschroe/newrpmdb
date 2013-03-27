@@ -143,12 +143,12 @@ static int rpmxdbReadHeader(rpmxdb xdb)
 	    unsigned char *pp = pageptr + o;
 	    slot->slotno = slotno;
 	    slot->subtag = le2ha(pp);
-	    if ((slot->subtag | 255) != (SLOT_MAGIC | 255)) {
+	    if ((slot->subtag & 0x00ffffff) != SLOT_MAGIC) {
 		free(xdb->slots);
 		rpmxdbUnmap(xdb);
 		return RPMRC_FAIL;
 	    }
-	    slot->subtag &= 255;
+	    slot->subtag = (slot->subtag >> 24) & 255;
 	    slot->blobtag = le2ha(pp + 4);
 	    slot->startpage = le2ha(pp + 8);
 	    slot->pagecnt = le2ha(pp + 12);
@@ -203,7 +203,7 @@ static int rpmxdbWriteHeader(rpmxdb xdb)
 static void rpmxdbUpdateSlot(rpmxdb xdb, struct xdb_slot *slot)
 {
     unsigned char *pp = xdb->mapped + (SLOT_START - 1 + slot->slotno) * SLOT_SIZE;
-    h2lea(SLOT_MAGIC | slot->subtag, pp);
+    h2lea(SLOT_MAGIC | (slot->subtag << 24), pp);
     h2lea(slot->blobtag, pp + 4);
     if (slot->pagecnt || !slot->startpage)
 	h2lea(slot->startpage, pp + 8);
