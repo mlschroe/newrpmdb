@@ -9,6 +9,7 @@
 #include <time.h>
 #include "rpmpkg.h"
 #include "rpmidx.h"
+#include "rpmxdb.h"
 
 #if 1
 #define rpmpkgPut rpmpkgPutLZO
@@ -147,7 +148,7 @@ void filterheadelements(char **ell, int cnt, int type)
 
 /* assumes we don't overwrite! */
 void
-writeheader(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned int blobl)
+writeheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx, unsigned char *blob, unsigned int blobl)
 {
   RpmHead h;
   char **bn;
@@ -194,7 +195,7 @@ writeheader(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned i
 }
 
 void
-eraseheader(rpmpkgdb pkgdb, unsigned int pkgidx)
+eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
 {
   unsigned char *blob;
   unsigned int blobl;
@@ -360,10 +361,11 @@ renumber(int offset)
 }
 
 void
-stats(rpmpkgdb pkgdb)
+stats(rpmpkgdb pkgdb, rpmxdb xdb)
 {
   int i;
   rpmpkgStats(pkgdb);
+  rpmxdbStats(xdb);
   for (i = 0; myidbs[i].name; i++)
     rpmidxStats(myidbs[i].idxdb);
 }
@@ -375,6 +377,7 @@ main()
   unsigned char x[4];
   unsigned int now;
   rpmpkgdb pkgdb;
+  rpmxdb xdb = 0;
 
   srandom((unsigned int)time(0) + (unsigned int)getpid() * 50);
   printf("reading headers\n");
@@ -414,6 +417,22 @@ main()
       perror("rpmpkgOpen");
       exit(1);
     }
+#if 1
+  unlink("Index.db");
+  if (rpmxdbOpen(&xdb, pkgdb, "Index.db", O_RDWR|O_CREAT, 0666))
+    {
+      perror("rpmxdbOpen");
+      exit(1);
+    }
+  for (i = 0; myidbs[i].name; i++)
+    {
+      if (rpmidxOpenXdb(&myidbs[i].idxdb, pkgdb, xdb, myidbs[i].tag))
+	{
+	  perror("rpmidxOpen");
+	  exit(1);
+	}
+    }
+#else
   for (i = 0; myidbs[i].name; i++)
     {
       unlink(myidbs[i].name);
@@ -423,6 +442,7 @@ main()
 	  exit(1);
 	}
     }
+#endif
   /* disable fsync */
   rpmpkgSetFsync(pkgdb, 0);
 
@@ -442,15 +462,17 @@ main()
 	  exit(1);
 	}
 #else
-      writeheader(pkgdb, hdrs[i].idx, hdrs[i].blob, hdrs[i].blobl);
+      writeheader(pkgdb, xdb, hdrs[i].idx, hdrs[i].blob, hdrs[i].blobl);
 #endif
     }
   printf("writing took %d ms\n", timems(now));
 
+#if 0
   lookup_basename(pkgdb, "screen");
   list_conflicts(pkgdb);
+#endif
 #if 0
-  stats(pkgdb);
+  stats(pkgdb, xdb);
 #endif
 
   drop_caches();
@@ -497,8 +519,8 @@ main()
 	  exit(1);
 	}
 #else
-      writeheader(pkgdb, hdrs[i].idx, hdrs[i].blob, hdrs[i].blobl);
-      eraseheader(pkgdb, hdrs[i].idx - nhdrs);
+      writeheader(pkgdb, xdb, hdrs[i].idx, hdrs[i].blob, hdrs[i].blobl);
+      eraseheader(pkgdb, xdb, hdrs[i].idx - nhdrs);
 #endif
     }
 #else
@@ -522,14 +544,14 @@ main()
     }
 #else
   for (i = 0; i < nhdrs; i++)
-    writeheader(pkgdb, hdrs[i].idx, hdrs[i].blob, hdrs[i].blobl);
+    writeheader(pkgdb, xdb, hdrs[i].idx, hdrs[i].blob, hdrs[i].blobl);
   for (i = 0; i < nhdrs; i++)
-    eraseheader(pkgdb, hdrs[i].idx - nhdrs);
+    eraseheader(pkgdb, xdb, hdrs[i].idx - nhdrs);
 #endif
 #endif
   printf("upgrade took %d ms\n", timems(now));
 #if 0
-  stats(pkgdb);
+  stats(pkgdb, xdb);
 #endif
 
   printf("erasing all packages\n");
@@ -544,16 +566,19 @@ main()
 	  exit(1);
 	}
 #else
-      eraseheader(pkgdb, hdrs[i].idx);
+      eraseheader(pkgdb, xdb, hdrs[i].idx);
 #endif
     }
   printf("erase took %d ms\n", timems(now));
 #if 0
-  stats(pkgdb);
+  stats(pkgdb, xdb);
 #endif
+
 
   for (i = 0; myidbs[i].name; i++)
     rpmidxClose(myidbs[i].idxdb);
+  if (xdb)
+      rpmxdbClose(xdb);
   rpmpkgClose(pkgdb);
 
   for (i = 0; i < nhdrs; i++)

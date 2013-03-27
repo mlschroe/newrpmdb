@@ -1143,7 +1143,7 @@ int rpmpkgStats(rpmpkgdb pkgdb)
     if (rpmpkgLock(pkgdb, 0))
 	return RPMRC_FAIL;
     if (rpmpkgReadHeader(pkgdb)) {
-	rpmpkgUnlock(pkgdb, 1);
+	rpmpkgUnlock(pkgdb, 0);
 	return RPMRC_FAIL;
     }
     if (rpmpkgReadSlots(pkgdb)) {
