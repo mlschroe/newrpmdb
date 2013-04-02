@@ -626,6 +626,42 @@ int rpmxdbDeleteBlob(rpmxdb xdb, unsigned int id)
     xdb->slots[slot->next].prev = slot->prev;
     xdb->usedblobpages -= slot->pagecnt;
 
+    if (xdb->usedblobpages * 2 < xdb->slots[xdb->nslots].startpage && (slot->startpage + slot->pagecnt) * 2 < xdb->slots[xdb->nslots].startpage) {
+	/* freed in first half of pages, move last two blobs if we can */
+	struct xdb_slot *slot1, *slot2, *afterslot;
+	unsigned int freestart, freecount;
+	afterslot = xdb->slots + slot->prev;
+	freestart = afterslot->startpage + afterslot->pagecnt;
+	freecount = xdb->slots[afterslot->next].startpage - freestart;
+
+	slot1 = xdb->slots + xdb->slots[xdb->nslots].prev;
+	if (slot1 == xdb->slots)
+	    slot1 = slot2 = 0;
+	else {
+	    slot2 = xdb->slots + slot1->prev;
+	    if (slot2 == xdb->slots)
+		slot2 = 0;
+	}
+	if (slot1->pagecnt < slot2->pagecnt) {
+	    struct xdb_slot *tmp = slot1;
+	    slot1 = slot2;
+	    slot2 = tmp;
+	}
+	if (slot1 && slot1->pagecnt < freecount) {
+	    if (moveblobto(xdb, slot1, afterslot, slot1->pagecnt)) {
+		/* hmm */
+		slot2 = 0;
+	    } else {
+		freestart += slot1->pagecnt;
+		freecount -= slot1->pagecnt;
+		afterslot = slot1;
+	    }
+	}
+	if (slot2 && slot2->pagecnt < freecount) {
+	    moveblobto(xdb, slot2, afterslot, slot2->pagecnt);
+	}
+    }
+
     /* zero slot */
     memset(slot, 0, sizeof(*slot));
     slot->slotno = id;
@@ -634,6 +670,23 @@ int rpmxdbDeleteBlob(rpmxdb xdb, unsigned int id)
     /* enqueue into free chain */
     slot->next = xdb->firstfree;
     xdb->firstfree = slot->slotno;
+
+    /* check if we can truncate the file */
+    slot = xdb->slots + xdb->slots[xdb->nslots].prev;
+    if (slot->startpage + slot->pagecnt < xdb->slots[xdb->nslots].startpage / 4 * 3) {
+	/* truncate */
+	unsigned int newend = slot->startpage + slot->pagecnt;
+	unsigned char *newaddr;
+	
+        newaddr = mremap(xdb->mapped, xdb->mappedlen, newend * xdb->pagesize, MREMAP_MAYMOVE);
+	if (newaddr != MAP_FAILED) {
+	    xdb->mapped = newaddr;
+	    xdb->mappedlen = newend * xdb->pagesize;
+	    ftruncate(xdb->fd, newend * xdb->pagesize);
+	    xdb->slots[xdb->nslots].startpage = newend;
+	}
+    }
+
     rpmpkgUnlock(xdb->pkgdb, 1);
     return RPMRC_OK;
 }
