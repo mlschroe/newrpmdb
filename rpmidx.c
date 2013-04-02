@@ -140,7 +140,7 @@ static int rpmidxMap(rpmidxdb idxdb)
 	    idxdb->head_mapped = 0;
 	    return RPMRC_FAIL;
 	}
-	/* we don't yet noew how to distribut the mapping, so assign everything to head for now */
+	/* we don't yet know how to distribute the mapping, so assign everything to head for now */
 	idxdb->head_mappedlen = stb.st_size;
 	idxdb->slot_mapped = idxdb->str_mapped = 0;
 	idxdb->slot_mappedlen = idxdb->str_mappedlen = 0;
