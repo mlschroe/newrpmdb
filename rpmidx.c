@@ -532,19 +532,13 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     if (idxdb->xdb) {
 	nidxdb->xdb = idxdb->xdb;
 	nidxdb->xdbtag = idxdb->xdbtag;
-	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid_headslot, idxdb->xdbtag, 0 + 2, 1)) {
-	    return RPMRC_FAIL;
-	}
-	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_headslot, 0)) {
+	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid_headslot, idxdb->xdbtag, 0 + 2, RPMXDB_CREAT|RPMXDB_TRUNC)) {
 	    return RPMRC_FAIL;
 	}
 	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_headslot, nidxdb->pagesize + slotsize)) {
 	    return RPMRC_FAIL;
 	}
-	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid_str, idxdb->xdbtag, 1 + 2, 1)) {
-	    return RPMRC_FAIL;
-	}
-	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_str, 0)) {
+	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid_str, idxdb->xdbtag, 1 + 2, RPMXDB_CREAT|RPMXDB_TRUNC)) {
 	    return RPMRC_FAIL;
 	}
 	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_str, maxkeysize)) {

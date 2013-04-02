@@ -566,14 +566,14 @@ abort();
     return RPMRC_OK;
 }
 
-int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned int subtag, int create)
+int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned int subtag, int flags)
 {
     struct xdb_slot *slot;
     unsigned int i, nslots;
-    if (rpmpkgLock(xdb->pkgdb, create ? 1 : 0))
+    if (rpmpkgLock(xdb->pkgdb, flags ? 1 : 0))
         return RPMRC_FAIL;
     if (rpmxdbReadHeader(xdb)) {
-	rpmpkgUnlock(xdb->pkgdb, create ? 1 : 0);
+	rpmpkgUnlock(xdb->pkgdb, flags ? 1 : 0);
         return RPMRC_FAIL;
     }
     nslots = xdb->nslots;
@@ -585,14 +585,20 @@ int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned
     }
     if (i == nslots)
 	i = 0;
-    if (!i && create) {
+    if (i && (flags & RPMXDB_TRUNC) != 0) {
+	if (rpmxdbResizeBlob(xdb, i, 0)) {
+	    rpmpkgUnlock(xdb->pkgdb, flags ? 1 : 0);
+	    return RPMRC_FAIL;
+	}
+    }
+    if (!i && (flags & RPMXDB_CREAT) != 0) {
 	if (createblob(xdb, &i, blobtag, subtag)) {
-	    rpmpkgUnlock(xdb->pkgdb, create ? 1 : 0);
+	    rpmpkgUnlock(xdb->pkgdb, flags ? 1 : 0);
 	    return RPMRC_FAIL;
 	}
     }
     *idp = i;
-    rpmpkgUnlock(xdb->pkgdb, create ? 1 : 0);
+    rpmpkgUnlock(xdb->pkgdb, flags ? 1 : 0);
     return RPMRC_OK;
 }
 

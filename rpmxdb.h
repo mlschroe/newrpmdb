@@ -5,7 +5,7 @@ typedef struct rpmxdb_s *rpmxdb;
 
 int rpmxdbOpen(rpmxdb *xdbp, rpmpkgdb pkgdb, const char *filename, int flags, int mode);
 void rpmxdbClose(rpmxdb xdb);
-int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned int subtag, int create);
+int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned int subtag, int flags);
 int rpmxdbEraseBlob(rpmxdb xdb, unsigned int id) ;
 int rpmxdbMapBlob(rpmxdb xdb, unsigned int id, void (*remapcallback)(rpmxdb xdb, void *data, void *newaddr, size_t newsize), void *remapcallbackdata);
 int rpmxdbUnmapBlob(rpmxdb xdb, unsigned int id);
@@ -15,4 +15,6 @@ int rpmxdbRenameBlob(rpmxdb xdb, unsigned int id, unsigned int blobtag, unsigned
 void rpmxdbSetFsync(rpmxdb xdb, int dofsync);
 int rpmxdbStats(rpmxdb xdb);
 
+#define RPMXDB_CREAT	(1 << 1)
+#define RPMXDB_TRUNC	(1 << 2)
 
