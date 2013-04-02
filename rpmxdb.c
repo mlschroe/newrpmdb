@@ -596,7 +596,7 @@ int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned
     return RPMRC_OK;
 }
 
-int rpmxdbDeleteBlob(rpmxdb xdb, unsigned int id)
+int rpmxdbEraseBlob(rpmxdb xdb, unsigned int id)
 {
     struct xdb_slot *slot;
     if (!id)
@@ -866,7 +866,7 @@ int rpmxdbRenameBlob(rpmxdb xdb, unsigned int id, unsigned int blobtag, unsigned
 #if 0
 	printf("(replacing #%d)\n", otherid);
 #endif
-	if (rpmxdbDeleteBlob(xdb, otherid)) {
+	if (rpmxdbEraseBlob(xdb, otherid)) {
 	    rpmpkgUnlock(xdb->pkgdb, 1);
 	    return RPMRC_FAIL;
 	}
