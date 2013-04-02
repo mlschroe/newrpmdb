@@ -647,7 +647,7 @@ int rpmxdbDeleteBlob(rpmxdb xdb, unsigned int id)
 	    slot1 = slot2;
 	    slot2 = tmp;
 	}
-	if (slot1 && slot1->pagecnt < freecount) {
+	if (slot1 && slot1->pagecnt && slot1->pagecnt < freecount) {
 	    if (moveblobto(xdb, slot1, afterslot, slot1->pagecnt)) {
 		/* hmm */
 		slot2 = 0;
@@ -657,7 +657,7 @@ int rpmxdbDeleteBlob(rpmxdb xdb, unsigned int id)
 		afterslot = slot1;
 	    }
 	}
-	if (slot2 && slot2->pagecnt < freecount) {
+	if (slot2 && slot2->pagecnt && slot2->pagecnt < freecount) {
 	    moveblobto(xdb, slot2, afterslot, slot2->pagecnt);
 	}
     }
