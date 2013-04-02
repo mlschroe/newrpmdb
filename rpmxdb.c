@@ -671,20 +671,12 @@ int rpmxdbEraseBlob(rpmxdb xdb, unsigned int id)
     slot->next = xdb->firstfree;
     xdb->firstfree = slot->slotno;
 
-    /* check if we can truncate the file */
+    /* check if we should truncate the file */
     slot = xdb->slots + xdb->slots[xdb->nslots].prev;
     if (slot->startpage + slot->pagecnt < xdb->slots[xdb->nslots].startpage / 4 * 3) {
-	/* truncate */
 	unsigned int newend = slot->startpage + slot->pagecnt;
-	unsigned char *newaddr;
-	
-        newaddr = mremap(xdb->mapped, xdb->mappedlen, newend * xdb->pagesize, MREMAP_MAYMOVE);
-	if (newaddr != MAP_FAILED) {
-	    xdb->mapped = newaddr;
-	    xdb->mappedlen = newend * xdb->pagesize;
-	    ftruncate(xdb->fd, newend * xdb->pagesize);
+	if (!ftruncate(xdb->fd, newend * xdb->pagesize))
 	    xdb->slots[xdb->nslots].startpage = newend;
-	}
     }
 
     rpmpkgUnlock(xdb->pkgdb, 1);
