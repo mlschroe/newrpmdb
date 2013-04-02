@@ -649,7 +649,7 @@ static int rpmidxCheck(rpmidxdb idxdb)
 
 static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx)
 {
-    unsigned int keyh = murmurhash((unsigned char *)key, (unsigned int)keyl);
+    unsigned int keyh = murmurhash(key, keyl);
     unsigned int keyoff = 0;
     unsigned int freeh = -1;
     unsigned int x, h, hh = 7;
@@ -715,7 +715,7 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned
 static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx)
 {
     unsigned int keyoff = 0;
-    unsigned int keyh = murmurhash((unsigned char *)key, (unsigned int)keyl);
+    unsigned int keyh = murmurhash(key, keyl);
     unsigned int hmask;
     unsigned int xmask;
     unsigned int x, h, hh = 7;
