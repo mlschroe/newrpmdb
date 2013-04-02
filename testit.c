@@ -581,6 +581,15 @@ main()
 
   for (i = 0; myidbs[i].name; i++)
     rpmidxClose(myidbs[i].idxdb);
+#if 0
+  if (xdb)
+    for (i = 0; myidbs[i].name; i++)
+      if (rpmidxEraseDbXdb(pkgdb, xdb, myidbs[i].tag))
+        {
+	  perror("rpmidxEraseDbXdb");
+        }
+#endif
+
   if (xdb)
       rpmxdbClose(xdb);
   rpmpkgClose(pkgdb);

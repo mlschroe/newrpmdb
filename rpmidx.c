@@ -985,6 +985,31 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     return RPMRC_OK;
 }
 
+int rpmidxEraseDbXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
+{
+    unsigned int headslotid, strid;
+    if (rpmpkgLock(pkgdb, 1))
+	return RPMRC_FAIL;
+    if (rpmxdbFindBlob(xdb, &headslotid, xdbtag, 0, 0)) {
+	rpmpkgUnlock(pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    if (rpmxdbFindBlob(xdb, &strid, xdbtag, 1, 0)) {
+	rpmpkgUnlock(pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    if (headslotid && rpmxdbEraseBlob(xdb, headslotid)) {
+	rpmpkgUnlock(pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    if (strid && rpmxdbEraseBlob(xdb, strid)) {
+	rpmpkgUnlock(pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    rpmpkgUnlock(pkgdb, 1);
+    return RPMRC_OK;
+}
+
 void rpmidxClose(rpmidxdb idxdb)
 {
     rpmidxUnmap(idxdb);
