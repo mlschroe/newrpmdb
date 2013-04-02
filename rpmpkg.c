@@ -937,7 +937,11 @@ static int rpmpkgEraseInternal(rpmpkgdb pkgdb, unsigned int pkgidx)
 	} else {
 	    blkoff = slot[-1].blkoff + slot[-1].blkcnt;
 	}
-	blkcnt = (slot->blkoff - blkoff) + slot->blkcnt;
+	if (slot < pkgdb->slots + pkgdb->nslots - 1) {
+	    blkcnt = slot[1].blkoff - blkoff;
+	} else {
+	    blkcnt = slot->blkoff + slot->blkcnt - blkoff;
+	}
 	slot->blkoff = 0;
 	slot->blkcnt = 0;
 	slot = pkgdb->slots + pkgdb->nslots - 2;
