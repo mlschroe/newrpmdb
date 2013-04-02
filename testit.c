@@ -178,7 +178,7 @@ writeheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx, unsigned char *blob
 	{
 	  if (myidbs[i].isarray > 1)
 	    filterheadelements(bn, cnt, myidbs[i].isarray);
-	  if (rpmidxPut(myidbs[i].idxdb, pkgidx, bn, cnt))
+	  if (rpmidxPutStrings(myidbs[i].idxdb, pkgidx, bn, cnt))
 	    {
 	      perror("rpmidxPut");
 	      exit(1);
@@ -230,7 +230,7 @@ eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
 	    {
 	      if (myidbs[i].isarray > 1)
 		filterheadelements(bn, cnt, myidbs[i].isarray);
-	      if (rpmidxErase(myidbs[i].idxdb, pkgidx, bn, cnt))
+	      if (rpmidxEraseStrings(myidbs[i].idxdb, pkgidx, bn, cnt))
 		{
 		  perror("rpmidxErase");
 		  exit(1);
@@ -258,7 +258,7 @@ lookup_basename(rpmpkgdb pkgdb, char *key)
   unsigned int *hits;
   unsigned int nhits;
   unsigned int i;
-  if (rpmidxGet(myidbs[0].idxdb, key, &hits, &nhits))
+  if (rpmidxGet(myidbs[0].idxdb, (unsigned char *)key, strlen(key), &hits, &nhits))
     {
       perror("rpmidxGet");
       exit(1);
@@ -275,20 +275,20 @@ lookup_basename(rpmpkgdb pkgdb, char *key)
 void
 list_conflicts(rpmpkgdb pkgdb)
 {
-  char **conf;
+  unsigned int *conf;
   unsigned int nconf, i;
-  if (rpmidxList(myidbs[4].idxdb, &conf, &nconf))
+  unsigned char *data;
+
+  if (rpmidxList(myidbs[4].idxdb, &conf, &nconf, &data))
     {
       perror("rpmidxList");
       exit(1);
     }
-  printf("found %d conflicts\n", nconf);
-  for (i = 0; i < nconf; i++)
-    {
-      printf("conflict %s\n", conf[i]);
-      free(conf[i]);
-    }
+  printf("found %d conflicts\n", nconf / 2);
+  for (i = 0; i < nconf; i += 2)
+    printf("conflict %s [%d]\n", data + conf[i], conf[i + 1]);
   free(conf);
+  free(data);
 }
 
 unsigned int 
@@ -411,14 +411,18 @@ main()
   printf("found %d headers\n", nhdrs);
 
   printf("opening database\n");
+#if 1
   unlink("Packages.db");
+#endif
   if (rpmpkgOpen(&pkgdb, "Packages.db", O_RDWR|O_CREAT, 0666))
     {
       perror("rpmpkgOpen");
       exit(1);
     }
 #if 1
+#if 1
   unlink("Index.db");
+#endif
   if (rpmxdbOpen(&xdb, pkgdb, "Index.db", O_RDWR|O_CREAT, 0666))
     {
       perror("rpmxdbOpen");

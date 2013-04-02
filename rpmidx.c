@@ -23,7 +23,7 @@ typedef struct rpmidxdb_s {
     rpmpkgdb pkgdb;		/* master database */
 
     char *filename;
-    int fd;                     /* our file descriptor */
+    int fd;			/* our file descriptor */
     int flags;
     int mode;
 
@@ -243,14 +243,26 @@ static inline void updateKeyexcess(rpmidxdb idxdb)
    h2lea(idxdb->keyexcess, idxdb->head_mapped + 36);
 }
 
-
-
+static int createempty(rpmidxdb idxdb, off_t off, size_t size)
+{
+    char buf[4096];
+    memset(buf, 0, sizeof(buf));
+    while (size >= 4096) {
+	if (pwrite(idxdb->fd, buf, 4096, off) != 4096)
+	    return RPMRC_FAIL;
+	off += 4096;
+	size -= 4096;
+    }
+    if (size > 0 && pwrite(idxdb->fd, buf, size , off) != size)
+	return RPMRC_FAIL;
+    return RPMRC_OK;
+}
 
 /*** Key management ***/
 
 #define MURMUR_M 0x5bd1e995
 
-static unsigned int murmurhash(unsigned char *s, unsigned int l)
+static unsigned int murmurhash(const unsigned char *s, unsigned int l)
 {
     unsigned int h =  l * MURMUR_M;
 
@@ -280,29 +292,66 @@ static unsigned int murmurhash(unsigned char *s, unsigned int l)
     return h;
 }
 
-static inline int equalkey(rpmidxdb idxdb, unsigned int off, char *key, int keyl)
+static inline unsigned int decodekeyl(unsigned char *p, unsigned int *hl)
 {
-    keyl++;	/* include trailing 0 */
-    if (off + keyl > idxdb->keyend)
-	return 0;
-    if (memcmp(key, idxdb->str_mapped + off, keyl))
-	return 0;
-    return 1;
+    if (*p != 255) {
+	*hl = 1;
+	return *p;
+    } else if (p[1] != 255 || p[2] != 255) {
+	*hl = 3;
+	return p[1] | p[2] << 8;
+    } else {
+	*hl = 7;
+	return p[3] | p[4] << 8 | p[5] << 16 | p[6] << 24;
+    }
 }
 
-static int createempty(rpmidxdb idxdb, off_t off, size_t size)
+static inline void encodekeyl(unsigned char *p, unsigned int keyl)
 {
-    char buf[4096];
-    memset(buf, 0, sizeof(buf));
-    while (size >= 4096) {
-	if (pwrite(idxdb->fd, buf, 4096, off) != 4096)
-	    return RPMRC_FAIL;
-	off += 4096;
-	size -= 4096;
+    if (keyl && keyl < 255) {
+	p[0] = keyl;
+    } else if (keyl < 65535) {
+	p[0] = 255;
+	p[1] = keyl;
+	p[2] = keyl >> 8;
+    } else {
+	p[0] = 255;
+	p[1] = 255;
+	p[2] = 255;
+	p[3] = keyl;
+	p[4] = keyl >> 8;
+	p[5] = keyl >> 16;
+	p[6] = keyl >> 24;
     }
-    if (size > 0 && pwrite(idxdb->fd, buf, size , off) != size)
-	return RPMRC_FAIL;
-    return RPMRC_OK;
+}
+
+static inline unsigned int keylsize(unsigned int keyl)
+{
+    return keyl && keyl < 255 ? 1 : keyl < 65535 ? 3 : 7;
+}
+
+static inline int equalkey(rpmidxdb idxdb, unsigned int off, const unsigned char *key, unsigned int keyl)
+{
+    unsigned char *p;
+    if (off + keyl + 1 > idxdb->keyend)
+	return 0;
+    p = idxdb->str_mapped + off;
+    if (keyl && keyl < 255) {
+	if (*p != keyl)
+	    return 0;
+	p += 1;
+    } else if (keyl < 65535) {
+	if (p[0] != 255 || (p[1] | p[2] << 8) != keyl)
+	    return 0;
+	p += 3;
+    } else {
+	if (p[0] != 255 || p[1] != 255 || p[2] != 255 || (p[3] | p[4] << 8 | p[5] << 16 | p[6] << 24) != keyl)
+	    return 0;
+	p += 7;
+    }
+    if (keyl && memcmp(key, p, keyl))
+	return 0;
+    return 1;
 }
 
 static int addkeypage(rpmidxdb idxdb) {
@@ -330,23 +379,18 @@ static int addkeypage(rpmidxdb idxdb) {
     return RPMRC_OK;
 }
 
-static int addnewkey(rpmidxdb idxdb, char *key, int keyl, unsigned int *keyoffp)
+static int addnewkey(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int *keyoffp)
 {
-    if (!keyl) {
-	/* special case empty string, it is always at offset 1 */
-	/* we use idxdb->str_mapped[0] to flag if the key is "in use" */
-	*keyoffp = 1;
-	idxdb->str_mapped[0] = 0;
-	return RPMRC_OK;
-    }
-    keyl++;	/* include trailing 0 */
-    while (idxdb->str_mappedlen - idxdb->keyend < keyl) {
+    int hl = keylsize(keyl);
+    while (idxdb->str_mappedlen - idxdb->keyend < hl + keyl) {
 	if (addkeypage(idxdb))
 	    return RPMRC_FAIL;
     }
-    memcpy(idxdb->str_mapped + idxdb->keyend, key, keyl);
+    encodekeyl(idxdb->str_mapped + idxdb->keyend, keyl);
+    if (keyl)
+	memcpy(idxdb->str_mapped + idxdb->keyend + hl, key, keyl);
     *keyoffp = idxdb->keyend;
-    idxdb->keyend += keyl;
+    idxdb->keyend += hl + keyl;
     updateKeyend(idxdb);
     return RPMRC_OK;
 }
@@ -377,10 +421,10 @@ static inline unsigned int decodedata(rpmidxdb idxdb, unsigned int data, unsigne
 	*datidxp = data ^ 0x80000000;
 	return ovldata;
     } else if (data & 0x40000000) {
-        *datidxp = (data ^ 0x40000000) >> 24;
+	*datidxp = (data ^ 0x40000000) >> 24;
 	return data & 0xffffff;
     } else {
-        *datidxp = data >> 20;
+	*datidxp = data >> 20;
 	return data & 0xfffff;
     }
 }
@@ -389,7 +433,7 @@ static inline unsigned int decodedata(rpmidxdb idxdb, unsigned int data, unsigne
 /*** Rebuild helpers ***/
 
 /* copy a single data entry into the new database */
-static inline void updatenew(rpmidxdb idxdb, unsigned int keyh, unsigned int newx, unsigned int data, unsigned int ovldata)
+static inline void copyentry(rpmidxdb idxdb, unsigned int keyh, unsigned int newx, unsigned int data, unsigned int ovldata)
 {
     unsigned int h, hh = 7;
     unsigned char *ent;
@@ -407,15 +451,15 @@ static inline void updatenew(rpmidxdb idxdb, unsigned int keyh, unsigned int new
     h2lea(newx, ent);
     h2lea(data, ent + 4);
     if (ovldata)
-        h2lea(ovldata, ent + idxdb->nslots * 8);
+	h2lea(ovldata, ent + idxdb->nslots * 8);
     idxdb->usedslots++;
 }
 
 /* copy all entries belonging to a single key from the old database into the new database */
-static inline void updatekey(char *key, int keyl, rpmidxdb idxdb, unsigned int oldkeyoff, rpmidxdb nidxdb, unsigned int newkeyoff, unsigned char *done)
+static inline void copykey(const unsigned char *key, unsigned int keyl, rpmidxdb idxdb, unsigned int oldkeyoff, rpmidxdb nidxdb, unsigned int newkeyoff, unsigned char *done)
 {
     unsigned int h, hh;
-    unsigned int keyh = murmurhash((unsigned char *)key, (unsigned int)keyl);
+    unsigned int keyh = murmurhash(key, keyl);
     unsigned int hmask = idxdb->hmask;
 
     oldkeyoff |= keyh & idxdb->xmask;
@@ -430,7 +474,7 @@ static inline void updatekey(char *key, int keyl, rpmidxdb idxdb, unsigned int o
 	    continue;
 	data = le2ha(ent + 4);
 	ovldata = (data & 0x80000000) ? le2ha(ent + idxdb->nslots * 8) : 0;
-	updatenew(nidxdb, keyh, newkeyoff, data, ovldata);
+	copyentry(nidxdb, keyh, newkeyoff, data, ovldata);
 	done[h >> 3] |= 1 << (h & 7);
     }
 }
@@ -483,7 +527,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 
     newlen = nidxdb->pagesize + slotsize + maxkeysize;
     nidxdb->keyoffset = nidxdb->slotoffset + slotsize;
-    keyend = 1 + 1;
+    keyend = 1;
 
     if (idxdb->xdb) {
 	nidxdb->xdb = idxdb->xdb;
@@ -530,7 +574,6 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	nidxdb->str_mappedlen = maxkeysize;
     }
 
-    nidxdb->str_mapped[0] = 255;	/* empty string not yet in use */
     done = calloc(idxdb->nslots / 8 + 1, 1);
     if (!done) {
 	rpmidxUnmap(nidxdb);
@@ -541,8 +584,8 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     }
     for (i = 0, ent = idxdb->slot_mapped; i < idxdb->nslots; i++, ent += 8) {
 	unsigned int x = le2ha(ent);
-	char *key;
-        int keyl;
+	unsigned char *key;
+	unsigned int keyl, hl;
 
 	if (x == 0 || x == -1)
 	    continue;
@@ -550,18 +593,12 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	    continue;	/* we already did that one */
 	}
 	x &= ~idxdb->xmask;
-	key = (char *)(idxdb->str_mapped + x);
-	keyl = strlen(key);
-	if (!keyl) {
-	    /* special case empty string, see addnewkey() */
-	    keyoff = 1;
-	    nidxdb->str_mapped[0] = 0;
-	} else {
-	    keyoff = keyend;
-	    memcpy(nidxdb->str_mapped + keyend, key, keyl + 1);
-	    keyend += keyl + 1;
-	}
-	updatekey(key, keyl, idxdb, x, nidxdb, keyoff, done);
+	key = idxdb->str_mapped + x;
+	keyl = decodekeyl(key, &hl);
+	memcpy(nidxdb->str_mapped + keyend, key, hl + keyl);
+	keyoff = keyend;
+	keyend += hl + keyl;
+	copykey(key + hl, keyl, idxdb, x, nidxdb, keyoff, done);
     }
     free(done);
     nidxdb->keyend = keyend;
@@ -610,9 +647,8 @@ static int rpmidxCheck(rpmidxdb idxdb)
     return RPMRC_OK;
 }
 
-static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, unsigned int datidx)
+static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx)
 {
-    int keyl = strlen(key);
     unsigned int keyh = murmurhash((unsigned char *)key, (unsigned int)keyl);
     unsigned int keyoff = 0;
     unsigned int freeh = -1;
@@ -676,10 +712,9 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, uns
     return RPMRC_OK;
 }
 
-static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, unsigned int datidx)
+static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx)
 {
     unsigned int keyoff = 0;
-    int keyl = strlen(key);
     unsigned int keyh = murmurhash((unsigned char *)key, (unsigned int)keyl);
     unsigned int hmask;
     unsigned int xmask;
@@ -730,24 +765,18 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, char *key, u
 	/* continue searching */
     }
     if (keyoff && !otherusers) {
-	if (!keyl) {
-	    /* special case empty string, see addnewkey() */
-	    idxdb->str_mapped[0] = 255;
-	} else {
-	    /* zero out unused key so that rpmidxList no longer returns it */
-	    memset(idxdb->str_mapped + keyoff, 0, keyl);
-	    idxdb->keyexcess += keyl + 1;
-	    updateKeyexcess(idxdb);
-	}
+	int hl = keylsize(keyl);
+	memset(idxdb->str_mapped + keyoff, 0, hl + keyl);
+	idxdb->keyexcess += hl + keyl;
+	updateKeyexcess(idxdb);
     }
     return RPMRC_OK;
 }
 
-static int rpmidxGetInternal(rpmidxdb idxdb, char *key, unsigned int **pkgidxlistp, unsigned int *pkgidxnump)
+static int rpmidxGetInternal(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int **pkgidxlistp, unsigned int *pkgidxnump)
 {
     unsigned int keyoff = 0;
-    int keyl = strlen(key);
-    unsigned int keyh = murmurhash((unsigned char *)key, (unsigned int)keyl);
+    unsigned int keyh = murmurhash(key, keyl);
     unsigned int hmask = idxdb->hmask;
     unsigned int xmask = idxdb->xmask;
     unsigned int x, h, hh = 7;
@@ -790,53 +819,52 @@ static int rpmidxGetInternal(rpmidxdb idxdb, char *key, unsigned int **pkgidxlis
     return RPMRC_OK;
 }
 
-static int rpmidxListInternal(rpmidxdb idxdb, char ***keylistp, unsigned int *nkeylistp)
+static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap)
 {
-    char **keylist = 0;
-    int nkeylist = 0;
+    unsigned int *keylist = 0;
+    unsigned int nkeylist = 0;
     unsigned int koff;
-    keylist = malloc(16 * sizeof(char *));
-    if (!keylist)
+    unsigned char *data, *terminate;
+
+    data = malloc(idxdb->keyend + 1);
+    if (!data)
 	return RPMRC_FAIL;
-    
-    /* special case empty string, see addnewkey() */
-    if (!idxdb->str_mapped[0]) {
-	/* empty string in use */
-	keylist[0] = strdup("");
-	if (!keylist[0]) {
-	    free(keylist);
-	    return RPMRC_FAIL;
-	}
-	nkeylist++;
+    memcpy(data, idxdb->str_mapped, idxdb->keyend);
+    keylist = malloc(16 * sizeof(*keylist));
+    if (!keylist) {
+	free(data);
+	return RPMRC_FAIL;
     }
-    for (koff = 2; koff < idxdb->keyend; koff++) {
-	char *key = (char *)idxdb->str_mapped + koff;
-	if (!*key)
+    terminate = 0;
+    for (koff = 1; koff < idxdb->keyend; ) {
+	unsigned char *key = idxdb->str_mapped + koff;
+	unsigned int hl, keyl;
+	if (!*key) {
+	    koff++;
 	    continue;
+	}
 	if ((nkeylist & 15) == 0) {
-	    char **kl = realloc(keylist, (nkeylist + 16) * sizeof(char *));
+	    unsigned int *kl = realloc(keylist, (nkeylist + 16) * sizeof(*keylist));
 	    if (!kl) {
-		int i;
-		for (i = 0; i < nkeylist; i++)
-		    free(keylist[i]);
 		free(keylist);
+		free(data);
 		return RPMRC_FAIL;
 	    }
 	    keylist = kl;
 	}
-	keylist[nkeylist] = strdup(key);
-	if (!keylist[nkeylist]) {
-	    int i;
-	    for (i = 0; i < nkeylist; i++)
-		free(keylist[i]);
-	    free(keylist);
-	    return RPMRC_FAIL;
-	}
-	nkeylist++;
-	koff += strlen(key);
+	keyl = decodekeyl(key, &hl);
+	keylist[nkeylist++] = koff + hl;
+	keylist[nkeylist++] = keyl;
+	koff += hl + keyl;
+	if (terminate)
+	  *terminate = 0;
+	terminate = data + koff;
     }
+    if (terminate)
+      *terminate = 0;
     *keylistp = keylist;
     *nkeylistp = nkeylist;
+    *datap = data;
     return RPMRC_OK;
 }
 
@@ -886,32 +914,32 @@ int rpmidxOpen(rpmidxdb *idxdbp, rpmpkgdb pkgdb, const char *filename, int flags
     *idxdbp = 0;
     idxdb = calloc(1, sizeof(*idxdb));
     if (!idxdb)
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     idxdb->filename = strdup(filename);
     if (!idxdb->filename) {
-        free(idxdb);
-        return RPMRC_FAIL;
+	free(idxdb);
+	return RPMRC_FAIL;
     }   
     if ((idxdb->fd = open(filename, flags, mode)) == -1) {
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }   
     if (fstat(idxdb->fd, &stb)) {
-        close(idxdb->fd);
+	close(idxdb->fd);
 	free(idxdb->filename);
-        free(idxdb);
-        return RPMRC_FAIL;
+	free(idxdb);
+	return RPMRC_FAIL;
     }   
     idxdb->pkgdb = pkgdb;
     idxdb->flags = flags;
     idxdb->mode = mode;
     idxdb->pagesize = sysconf(_SC_PAGE_SIZE);
     if (stb.st_size == 0) {
-        if (rpmidxInit(idxdb)) {
-            close(idxdb->fd);
+	if (rpmidxInit(idxdb)) {
+	    close(idxdb->fd);
 	    free(idxdb->filename);
-            free(idxdb);
-            return RPMRC_FAIL;
-        }
+	    free(idxdb);
+	    return RPMRC_FAIL;
+	}
     }
     *idxdbp = idxdb;
     return RPMRC_OK;
@@ -926,17 +954,17 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     if (rpmpkgLock(pkgdb, 0))
 	return RPMRC_FAIL;
     if (rpmxdbFindBlob(xdb, &headslotid, xdbtag, 0, 0)) {
-        rpmpkgUnlock(pkgdb, 0);
+	rpmpkgUnlock(pkgdb, 0);
 	return RPMRC_FAIL;
     }
     if (rpmxdbFindBlob(xdb, &strid, xdbtag, 1, 0)) {
-        rpmpkgUnlock(pkgdb, 0);
+	rpmpkgUnlock(pkgdb, 0);
 	return RPMRC_FAIL;
     }
     idxdb = calloc(1, sizeof(*idxdb));
     if (!idxdb) {
-        rpmpkgUnlock(pkgdb, 0);
-        return RPMRC_FAIL;
+	rpmpkgUnlock(pkgdb, 0);
+	return RPMRC_FAIL;
     }
     idxdb->fd = -1;
     idxdb->xdb = xdb;
@@ -947,9 +975,9 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     idxdb->pagesize = sysconf(_SC_PAGE_SIZE);
     if (!headslotid || !strid) {
 	if (rpmidxInit(idxdb)) {
-            free(idxdb);
+	    free(idxdb);
 	    rpmpkgUnlock(pkgdb, 0);
-            return RPMRC_FAIL;
+	    return RPMRC_FAIL;
 	}
     }
     *idxdbp = idxdb;
@@ -961,30 +989,49 @@ void rpmidxClose(rpmidxdb idxdb)
 {
     rpmidxUnmap(idxdb);
     if (idxdb->fd >= 0) {
-        close(idxdb->fd);
-        idxdb->fd = -1; 
+	close(idxdb->fd);
+	idxdb->fd = -1; 
     }   
     if (idxdb->filename)
 	free(idxdb->filename);
     free(idxdb);
 }
 
-int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
+int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx)
+{
+    if (!pkgidx || datidx >= 0x80000000) {
+	return RPMRC_FAIL;
+    }
+    if (rpmpkgLock(idxdb->pkgdb, 1))
+	return RPMRC_FAIL;
+    if (rpmidxReadHeader(idxdb)) {
+	rpmpkgUnlock(idxdb->pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    if (rpmidxPutInternal(idxdb, pkgidx, key, keyl, datidx)) {
+	rpmpkgUnlock(idxdb->pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    rpmpkgUnlock(idxdb->pkgdb, 1);
+    return RPMRC_OK;
+}
+
+int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
 {
     unsigned int i;
     if (!pkgidx) {
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     if (rpmpkgLock(idxdb->pkgdb, 1))
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 1);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
 	if (!keys[i])
 	    continue;
-	if (rpmidxPutInternal(idxdb, pkgidx, keys[i], i)) {
+	if (rpmidxPutInternal(idxdb, pkgidx, (unsigned char *)keys[i], strlen(keys[i]), i)) {
 	    rpmpkgUnlock(idxdb->pkgdb, 1);
 	    return RPMRC_FAIL;
 	}
@@ -993,22 +1040,41 @@ int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nke
     return RPMRC_OK;
 }
 
-int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
+int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx)
+{
+    if (!pkgidx || datidx >= 0x80000000) {
+	return RPMRC_FAIL;
+    }
+    if (rpmpkgLock(idxdb->pkgdb, 1))
+	return RPMRC_FAIL;
+    if (rpmidxReadHeader(idxdb)) {
+	rpmpkgUnlock(idxdb->pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    if (rpmidxEraseInternal(idxdb, pkgidx, key, keyl, datidx)) {
+	rpmpkgUnlock(idxdb->pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+    rpmpkgUnlock(idxdb->pkgdb, 1);
+    return RPMRC_OK;
+}
+
+int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
 {
     unsigned int i;
     if (!pkgidx) {
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     if (rpmpkgLock(idxdb->pkgdb, 1))
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 1);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
 	if (!keys[i])
 	    continue;
-	if (rpmidxEraseInternal(idxdb, pkgidx, keys[i], i)) {
+	if (rpmidxEraseInternal(idxdb, pkgidx, (const unsigned char *)keys[i], strlen(keys[i]), i)) {
 	    rpmpkgUnlock(idxdb->pkgdb, 1);
 	    return RPMRC_FAIL;
 	}
@@ -1017,7 +1083,7 @@ int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int n
     return RPMRC_OK;
 }
 
-int rpmidxGet(rpmidxdb idxdb, char *key, unsigned int **pkgidxlistp, unsigned int *pkgidxnump)
+int rpmidxGet(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int **pkgidxlistp, unsigned int *pkgidxnump)
 {
     int rc;
     *pkgidxlistp = 0;
@@ -1026,14 +1092,14 @@ int rpmidxGet(rpmidxdb idxdb, char *key, unsigned int **pkgidxlistp, unsigned in
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 0);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
-    rc = rpmidxGetInternal(idxdb, key, pkgidxlistp, pkgidxnump);
+    rc = rpmidxGetInternal(idxdb, key, keyl, pkgidxlistp, pkgidxnump);
     rpmpkgUnlock(idxdb->pkgdb, 0);
     return rc;
 }
 
-int rpmidxList(rpmidxdb idxdb, char ***keylistp, unsigned int *nkeylistp)
+int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap)
 {
     int rc;
     *keylistp = 0;
@@ -1042,9 +1108,9 @@ int rpmidxList(rpmidxdb idxdb, char ***keylistp, unsigned int *nkeylistp)
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 0);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
-    rc = rpmidxListInternal(idxdb, keylistp, nkeylistp);
+    rc = rpmidxListInternal(idxdb, keylistp, nkeylistp, datap);
     rpmpkgUnlock(idxdb->pkgdb, 0);
     return rc;
 }
@@ -1056,11 +1122,11 @@ int rpmidxUpdateGeneration(rpmidxdb idxdb)
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 1);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     if (rpmpkgGetIdxGeneration(idxdb->pkgdb, &generation)) {
 	rpmpkgUnlock(idxdb->pkgdb, 1);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     if (idxdb->generation != generation) {
 	idxdb->generation = generation;
@@ -1076,7 +1142,7 @@ int rpmidxStats(rpmidxdb idxdb)
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
 	rpmpkgUnlock(idxdb->pkgdb, 0);
-        return RPMRC_FAIL;
+	return RPMRC_FAIL;
     }
     printf("--- IndexDB Stats\n");
     if (idxdb->xdb) {
