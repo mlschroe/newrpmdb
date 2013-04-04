@@ -10,11 +10,12 @@ int rpmidxEraseDbXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag);
 void rpmidxClose(rpmidxdb idxdbp);
 
 int rpmidxGet(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int **pkgidxlist, unsigned int *pkgidxnum);
-int rpmidxPut(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx);
-int rpmidxErase(rpmidxdb idxdb, unsigned int pkgidx, const unsigned char *key, unsigned int keyl, unsigned int datidx);
+int rpmidxPut(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx);
+int rpmidxErase(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx);
+int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap);
+
 int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
 int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
-int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap);
 
 int rpmidxUpdateGeneration(rpmidxdb idxdb);
 int rpmidxStats(rpmidxdb idxdb);
