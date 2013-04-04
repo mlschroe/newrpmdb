@@ -433,7 +433,7 @@ static inline unsigned int decodedata(rpmidxdb idxdb, unsigned int data, unsigne
 /*** Rebuild helpers ***/
 
 /* copy a single data entry into the new database */
-static inline void copyentry(rpmidxdb idxdb, unsigned int keyh, unsigned int newx, unsigned int data, unsigned int ovldata)
+static inline void copyentry(rpmidxdb idxdb, unsigned int keyh, unsigned int newkeyoff, unsigned int data, unsigned int ovldata)
 {
     unsigned int h, hh = 7;
     unsigned char *ent;
@@ -448,7 +448,7 @@ static inline void copyentry(rpmidxdb idxdb, unsigned int keyh, unsigned int new
 	    break;
     }
     /* write data */
-    h2lea(newx, ent);
+    h2lea(newkeyoff, ent);
     h2lea(data, ent + 4);
     if (ovldata)
 	h2lea(ovldata, ent + idxdb->nslots * 8);
@@ -456,7 +456,7 @@ static inline void copyentry(rpmidxdb idxdb, unsigned int keyh, unsigned int new
 }
 
 /* copy all entries belonging to a single key from the old database into the new database */
-static inline void copykey(const unsigned char *key, unsigned int keyl, rpmidxdb idxdb, unsigned int oldkeyoff, rpmidxdb nidxdb, unsigned int newkeyoff, unsigned char *done)
+static inline void copykeyentries(const unsigned char *key, unsigned int keyl, rpmidxdb idxdb, unsigned int oldkeyoff, rpmidxdb nidxdb, unsigned int newkeyoff, unsigned char *done)
 {
     unsigned int h, hh;
     unsigned int keyh = murmurhash(key, keyl);
@@ -496,8 +496,10 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	    return RPMRC_FAIL;
 	sprintf(tmpname, "%s-XXXXXX", idxdb->filename);
 	nidxdb->fd = mkstemp(tmpname);
-	if (nidxdb->fd == -1)
+	if (nidxdb->fd == -1) {
+	    free(tmpname);
 	    return RPMRC_FAIL;
+	}
     }
 
     /* don't trust usedslots and dummyslots */
@@ -589,10 +591,10 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	x &= ~idxdb->xmask;
 	key = idxdb->str_mapped + x;
 	keyl = decodekeyl(key, &hl);
-	memcpy(nidxdb->str_mapped + keyend, key, hl + keyl);
 	keyoff = keyend;
 	keyend += hl + keyl;
-	copykey(key + hl, keyl, idxdb, x, nidxdb, keyoff, done);
+	memcpy(nidxdb->str_mapped + keyoff, key, hl + keyl);
+	copykeyentries(key + hl, keyl, idxdb, x, nidxdb, keyoff, done);
     }
     free(done);
     nidxdb->keyend = keyend;
