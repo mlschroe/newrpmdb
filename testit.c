@@ -365,7 +365,8 @@ stats(rpmpkgdb pkgdb, rpmxdb xdb)
 {
   int i;
   rpmpkgStats(pkgdb);
-  rpmxdbStats(xdb);
+  if (xdb)
+    rpmxdbStats(xdb);
   for (i = 0; myidbs[i].name; i++)
     rpmidxStats(myidbs[i].idxdb);
 }
