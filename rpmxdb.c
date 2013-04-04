@@ -212,7 +212,7 @@ static void rpmxdbUpdateSlot(rpmxdb xdb, struct xdb_slot *slot)
     if (slot->pagecnt || !slot->startpage)
 	h2lea(slot->startpage, pp + 8);
     else
-	h2lea(1, pp + 8);	/* empty but used slots always start at 1 */
+	h2lea(1, pp + 8);	/* "empty but used" blobs always start at 1 */
     h2lea(slot->pagecnt, pp + 12);
     xdb->generation++;
     h2lea(xdb->generation, xdb->mapped + 4);
@@ -481,14 +481,14 @@ static int moveblobstofront(rpmxdb xdb, struct xdb_slot *afterslot)
 	slot1 = slot2;
 	slot2 = tmp;
     }
-    if (slot1 && slot1->pagecnt && slot1->pagecnt < freecount && slot1->startpage > freestart) {
+    if (slot1 && slot1->pagecnt && slot1->pagecnt <= freecount && slot1->startpage > freestart) {
 	if (moveblobto(xdb, slot1, afterslot, slot1->pagecnt))
 	    return RPMRC_FAIL;
 	freestart += slot1->pagecnt;
 	freecount -= slot1->pagecnt;
 	afterslot = slot1;
     }
-    if (slot2 && slot2->pagecnt && slot2->pagecnt < freecount && slot2->startpage > freestart) {
+    if (slot2 && slot2->pagecnt && slot2->pagecnt <= freecount && slot2->startpage > freestart) {
 	if (moveblobto(xdb, slot2, afterslot, slot2->pagecnt))
 	    return RPMRC_FAIL;
     }
