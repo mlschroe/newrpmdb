@@ -670,11 +670,10 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned
 	    freeh = h;
 	    continue;
 	}
-	if (((x ^ keyh) & xmask) != 0)
-	    continue;
-	x &= ~xmask;
 	if (!keyoff) {
-	    if (!equalkey(idxdb, x, key, keyl))
+	    if (((x ^ keyh) & xmask) != 0)
+		continue;
+	    if (!equalkey(idxdb, x & ~xmask, key, keyl))
 		continue;
 	    keyoff = x;
 	}
@@ -691,6 +690,7 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned
 	if (addnewkey(idxdb, key, keyl, &keyoff)) {
 	    return RPMRC_FAIL;
 	}
+	keyoff |= keyh & xmask;
 	/* re-calculate ent, addnewkey may have changed the mapping! */
 	ent = idxdb->slot_mapped + 8 * h;
     }
@@ -700,7 +700,6 @@ static int rpmidxPutInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsigned
     } else {
 	ent = idxdb->slot_mapped + 8 * freeh;
     }
-    keyoff |= keyh & xmask;
     h2lea(keyoff, ent);
     h2lea(data, ent + 4);
     if (ovldata)
@@ -732,11 +731,10 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsign
 	    break;
 	if (x == -1)
 	    continue;
-	if (((x ^ keyh) & xmask) != 0)
-	    continue;
-	x &= ~xmask;
 	if (!keyoff) {
-	    if (!equalkey(idxdb, x, key, keyl))
+	    if (((x ^ keyh) & xmask) != 0)
+		continue;
+	    if (!equalkey(idxdb, x & ~xmask, key, keyl))
 		continue;
 	    keyoff = x;
 	}
@@ -762,7 +760,7 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, unsigned int pkgidx, const unsign
     }
     if (keyoff && !otherusers) {
 	int hl = keylsize(keyl);
-	memset(idxdb->str_mapped + keyoff, 0, hl + keyl);
+	memset(idxdb->str_mapped + (keyoff & ~xmask), 0, hl + keyl);
 	idxdb->keyexcess += hl + keyl;
 	updateKeyexcess(idxdb);
     }
@@ -786,11 +784,10 @@ static int rpmidxGetInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
 	    break;
 	if (x == -1)
 	    continue;
-	if (((x ^ keyh) & xmask) != 0)
-	    continue;
-	x &= ~xmask;
 	if (!keyoff) {
-	    if (!equalkey(idxdb, x, key, keyl))
+	    if (((x ^ keyh) & xmask) != 0)
+		continue;
+	    if (!equalkey(idxdb, x & ~xmask, key, keyl))
 		continue;
 	    keyoff = x;
 	}
