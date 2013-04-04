@@ -817,10 +817,9 @@ static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned 
 {
     unsigned int *keylist = 0;
     unsigned int nkeylist = 0;
-    unsigned int koff;
-    unsigned char *data, *terminate;
+    unsigned char *data, *terminate, *key, *keyendp;
 
-    data = malloc(idxdb->keyend + 1);
+    data = malloc(idxdb->keyend + 1);	/* +1 so we can terminate the last key */
     if (!data)
 	return RPMRC_FAIL;
     memcpy(data, idxdb->str_mapped, idxdb->keyend);
@@ -830,11 +829,10 @@ static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned 
 	return RPMRC_FAIL;
     }
     terminate = 0;
-    for (koff = 1; koff < idxdb->keyend; ) {
-	unsigned char *key = idxdb->str_mapped + koff;
+    for (key = data + 1, keyendp = data + idxdb->keyend; key < keyendp; ) {
 	unsigned int hl, keyl;
 	if (!*key) {
-	    koff++;
+	    key++;
 	    continue;
 	}
 	if ((nkeylist & 15) == 0) {
@@ -847,12 +845,12 @@ static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned 
 	    keylist = kl;
 	}
 	keyl = decodekeyl(key, &hl);
-	keylist[nkeylist++] = koff + hl;
+	keylist[nkeylist++] = key + hl - data;
 	keylist[nkeylist++] = keyl;
-	koff += hl + keyl;
+	key += hl + keyl;
 	if (terminate)
 	  *terminate = 0;
-	terminate = data + koff;
+	terminate = key;
     }
     if (terminate)
       *terminate = 0;
