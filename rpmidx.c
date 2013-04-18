@@ -451,7 +451,7 @@ static inline void copyentry(rpmidxdb idxdb, unsigned int keyh, unsigned int new
     h2lea(newkeyoff, ent);
     h2lea(data, ent + 4);
     if (ovldata)
-	h2lea(ovldata, ent + idxdb->nslots * 8);
+	h2lea(ovldata, idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h);
     idxdb->usedslots++;
 }
 
@@ -473,7 +473,7 @@ static inline void copykeyentries(const unsigned char *key, unsigned int keyl, r
 	if (x != oldkeyoff)
 	    continue;
 	data = le2ha(ent + 4);
-	ovldata = (data & 0x80000000) ? le2ha(ent + idxdb->nslots * 8) : 0;
+	ovldata = (data & 0x80000000) ? le2ha(idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h) : 0;
 	copyentry(nidxdb, keyh, newkeyoff, data, ovldata);
 	done[h >> 3] |= 1 << (h & 7);
     }
@@ -681,7 +681,7 @@ static int rpmidxPutInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
 	    continue;
 	/* string matches, check data/ovldata */
 	if (le2ha(ent + 4) == data) {
-	    if (!ovldata || le2ha(ent + idxdb->nslots * 8) == ovldata)
+	    if (!ovldata || le2ha(idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h) == ovldata)
 		return RPMRC_OK;	/* already in database */
 	}
 	/* continue searching */
@@ -698,12 +698,13 @@ static int rpmidxPutInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
 	idxdb->usedslots++;
 	updateUsedslots(idxdb);
     } else {
-	ent = idxdb->slot_mapped + 8 * freeh;
+	h = freeh;
+	ent = idxdb->slot_mapped + 8 * h;
     }
     h2lea(keyoff, ent);
     h2lea(data, ent + 4);
     if (ovldata)
-	h2lea(ovldata, ent + idxdb->nslots * 8);
+	h2lea(ovldata, idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h);
     return RPMRC_OK;
 }
 
@@ -745,7 +746,7 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, const unsigned char *key, unsigne
 	    otherusers = 1;
 	    continue;
 	}
-	if (ovldata && le2ha(ent + idxdb->nslots * 8) != ovldata) {
+	if (ovldata && le2ha(idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h) != ovldata) {
 	    otherusers = 1;
 	    continue;
 	}
@@ -753,7 +754,7 @@ static int rpmidxEraseInternal(rpmidxdb idxdb, const unsigned char *key, unsigne
 	h2lea(-1, ent);
 	h2lea(-1, ent + 4);
 	if (ovldata)
-	    h2lea(0, ent + idxdb->nslots * 8);
+	    h2lea(0, idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h);
 	idxdb->dummyslots++;
 	updateDummyslots(idxdb);
 	/* continue searching */
@@ -803,7 +804,7 @@ static int rpmidxGetInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
 		return RPMRC_FAIL;
 	}
 	data = le2ha(ent + 4);
-	ovldata = (data & 0x80000000) ? le2ha(ent + idxdb->nslots * 8) : 0;
+	ovldata = (data & 0x80000000) ? le2ha(idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h) : 0;
 	hits[nhits++] = decodedata(idxdb, data, ovldata, &datidx);
 	hits[nhits++] = datidx;
     }

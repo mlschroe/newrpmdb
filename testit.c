@@ -100,7 +100,7 @@ rpmheadfromblob(RpmHead *h, unsigned char *blob, unsigned int blobl)
       exit(1);
     }
   h->cnt = blob[8] << 24 | blob[9] << 16 | blob[10] << 8 | blob[11];
-  h->dcnt = blob[9] << 24 | blob[10] << 16 | blob[11] << 8 | blob[12];
+  h->dcnt = blob[12] << 24 | blob[13] << 16 | blob[14] << 8 | blob[15];
   h->dp = blob + 16 + h->cnt * 16;
 }
 
