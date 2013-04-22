@@ -23,6 +23,8 @@ typedef struct rpmpkgdb_s {
     int flags;
     int mode;
 
+    int rdonly;
+
     unsigned int locked_shared;
     unsigned int locked_excl;
 
@@ -695,6 +697,8 @@ static int rpmpkgGetlock(rpmpkgdb pkgdb, int type)
 int rpmpkgLock(rpmpkgdb pkgdb, int excl)
 {
     unsigned int *lockcntp = excl ? &pkgdb->locked_excl : &pkgdb->locked_shared;
+    if (excl && pkgdb->rdonly)
+	return RPMRC_FAIL;
     if (*lockcntp > 0 || (!excl && pkgdb->locked_excl)) {
 	(*lockcntp)++;
 	return RPMRC_OK;
@@ -774,6 +778,8 @@ int rpmpkgOpen(rpmpkgdb *pkgdbp, const char *filename, int flags, int mode)
 	free(pkgdb);
 	return RPMRC_FAIL;
     }
+    if ((flags & (O_RDONLY|O_RDWR)) == O_RDONLY)
+	pkgdb->rdonly = 1;
     if ((pkgdb->fd = open(filename, flags, mode)) == -1) {
         return RPMRC_FAIL;
     }

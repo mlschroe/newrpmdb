@@ -27,6 +27,8 @@ typedef struct rpmidxdb_s {
     int flags;
     int mode;
 
+    int rdonly;
+
     rpmxdb xdb;
     unsigned int xdbtag;
     unsigned int xdbid_headslot;
@@ -135,7 +137,7 @@ static int rpmidxMap(rpmidxdb idxdb)
 	if (stb.st_size < idxdb->pagesize * 3) {
 	    return RPMRC_FAIL;
 	}
-	idxdb->head_mapped = mmap(0, stb.st_size, PROT_READ | PROT_WRITE, MAP_SHARED, idxdb->fd, 0);
+	idxdb->head_mapped = mmap(0, stb.st_size, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, idxdb->fd, 0);
 	if (idxdb->head_mapped == MAP_FAILED) {
 	    idxdb->head_mapped = 0;
 	    return RPMRC_FAIL;
@@ -556,7 +558,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	    free(tmpname);
 	    return RPMRC_FAIL;
 	}
-	nidxdb->head_mapped = mmap(0, newlen, PROT_READ | PROT_WRITE, MAP_SHARED, nidxdb->fd, 0);
+	nidxdb->head_mapped = mmap(0, newlen, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, nidxdb->fd, 0);
 	if (nidxdb->head_mapped == MAP_FAILED) {
 	    close(nidxdb->fd);
 	    unlink(tmpname);
@@ -888,13 +890,25 @@ static int rpmidxInitInternal(rpmidxdb idxdb)
     return rpmidxRebuildInternal(idxdb);
 }
 
+static int rpmidxLock(rpmidxdb idxdb, int excl)
+{
+    if (excl && idxdb->rdonly)
+	return RPMRC_FAIL;
+    return rpmpkgLock(idxdb->pkgdb, excl);
+}
+
+static int rpmidxUnlock(rpmidxdb idxdb, int excl)
+{
+    return rpmpkgUnlock(idxdb->pkgdb, excl);
+}
+
 static int rpmidxInit(rpmidxdb idxdb)
 {
     int rc;
-    if (rpmpkgLock(idxdb->pkgdb, 1))
+    if (rpmidxLock(idxdb, 1))
 	return RPMRC_FAIL;
     rc = rpmidxInitInternal(idxdb);
-    rpmpkgUnlock(idxdb->pkgdb, 1);
+    rpmidxUnlock(idxdb, 1);
     return rc;
 }
 
@@ -912,6 +926,8 @@ int rpmidxOpen(rpmidxdb *idxdbp, rpmpkgdb pkgdb, const char *filename, int flags
 	free(idxdb);
 	return RPMRC_FAIL;
     }   
+    if ((flags & (O_RDONLY|O_RDWR)) == O_RDONLY)
+	idxdb->rdonly = 1;
     if ((idxdb->fd = open(filename, flags, mode)) == -1) {
 	return RPMRC_FAIL;
     }   
@@ -943,19 +959,19 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     unsigned int headslotid, strid;
     *idxdbp = 0;
     
-    if (rpmpkgLock(pkgdb, 0))
+    if (rpmxdbLock(xdb, 0))
 	return RPMRC_FAIL;
     if (rpmxdbFindBlob(xdb, &headslotid, xdbtag, 0, 0)) {
-	rpmpkgUnlock(pkgdb, 0);
+	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
     }
     if (rpmxdbFindBlob(xdb, &strid, xdbtag, 1, 0)) {
-	rpmpkgUnlock(pkgdb, 0);
+	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
     }
     idxdb = calloc(1, sizeof(*idxdb));
     if (!idxdb) {
-	rpmpkgUnlock(pkgdb, 0);
+	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
     }
     idxdb->fd = -1;
@@ -968,37 +984,37 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     if (!headslotid || !strid) {
 	if (rpmidxInit(idxdb)) {
 	    free(idxdb);
-	    rpmpkgUnlock(pkgdb, 0);
+	    rpmxdbUnlock(xdb, 0);
 	    return RPMRC_FAIL;
 	}
     }
     *idxdbp = idxdb;
-    rpmpkgUnlock(pkgdb, 0);
+    rpmxdbUnlock(xdb, 0);
     return RPMRC_OK;
 }
 
 int rpmidxEraseDbXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
 {
     unsigned int headslotid, strid;
-    if (rpmpkgLock(pkgdb, 1))
+    if (rpmxdbLock(xdb, 1))
 	return RPMRC_FAIL;
     if (rpmxdbFindBlob(xdb, &headslotid, xdbtag, 0, 0)) {
-	rpmpkgUnlock(pkgdb, 1);
+	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
     if (rpmxdbFindBlob(xdb, &strid, xdbtag, 1, 0)) {
-	rpmpkgUnlock(pkgdb, 1);
+	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
     if (headslotid && rpmxdbEraseBlob(xdb, headslotid)) {
-	rpmpkgUnlock(pkgdb, 1);
+	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
     if (strid && rpmxdbEraseBlob(xdb, strid)) {
-	rpmpkgUnlock(pkgdb, 1);
+	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
-    rpmpkgUnlock(pkgdb, 1);
+    rpmxdbUnlock(xdb, 1);
     return RPMRC_OK;
 }
 
@@ -1019,17 +1035,17 @@ int rpmidxPut(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsig
     if (!pkgidx || datidx >= 0x80000000) {
 	return RPMRC_FAIL;
     }
-    if (rpmpkgLock(idxdb->pkgdb, 1))
+    if (rpmidxLock(idxdb, 1))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
     if (rpmidxPutInternal(idxdb, key, keyl, pkgidx, datidx)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
-    rpmpkgUnlock(idxdb->pkgdb, 1);
+    rpmidxUnlock(idxdb, 1);
     return RPMRC_OK;
 }
 
@@ -1038,17 +1054,17 @@ int rpmidxErase(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, uns
     if (!pkgidx || datidx >= 0x80000000) {
 	return RPMRC_FAIL;
     }
-    if (rpmpkgLock(idxdb->pkgdb, 1))
+    if (rpmidxLock(idxdb, 1))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
     if (rpmidxEraseInternal(idxdb, key, keyl, pkgidx, datidx)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
-    rpmpkgUnlock(idxdb->pkgdb, 1);
+    rpmidxUnlock(idxdb, 1);
     return RPMRC_OK;
 }
 
@@ -1057,14 +1073,14 @@ int rpmidxGet(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsig
     int rc;
     *pkgidxlistp = 0;
     *pkgidxnump = 0;
-    if (rpmpkgLock(idxdb->pkgdb, 0))
+    if (rpmidxLock(idxdb, 0))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 0);
+	rpmidxUnlock(idxdb, 0);
 	return RPMRC_FAIL;
     }
     rc = rpmidxGetInternal(idxdb, key, keyl, pkgidxlistp, pkgidxnump);
-    rpmpkgUnlock(idxdb->pkgdb, 0);
+    rpmidxUnlock(idxdb, 0);
     return rc;
 }
 
@@ -1073,14 +1089,14 @@ int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp,
     int rc;
     *keylistp = 0;
     *nkeylistp = 0;
-    if (rpmpkgLock(idxdb->pkgdb, 0))
+    if (rpmidxLock(idxdb, 0))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 0);
+	rpmidxUnlock(idxdb, 0);
 	return RPMRC_FAIL;
     }
     rc = rpmidxListInternal(idxdb, keylistp, nkeylistp, datap);
-    rpmpkgUnlock(idxdb->pkgdb, 0);
+    rpmidxUnlock(idxdb, 0);
     return rc;
 }
 
@@ -1090,21 +1106,21 @@ int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned 
     if (!pkgidx) {
 	return RPMRC_FAIL;
     }
-    if (rpmpkgLock(idxdb->pkgdb, 1))
+    if (rpmidxLock(idxdb, 1))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
 	if (!keys[i])
 	    continue;
 	if (rpmidxPutInternal(idxdb, (unsigned char *)keys[i], strlen(keys[i]), pkgidx, i)) {
-	    rpmpkgUnlock(idxdb->pkgdb, 1);
+	    rpmidxUnlock(idxdb, 1);
 	    return RPMRC_FAIL;
 	}
     }
-    rpmpkgUnlock(idxdb->pkgdb, 1);
+    rpmidxUnlock(idxdb, 1);
     return RPMRC_OK;
 }
 
@@ -1114,51 +1130,51 @@ int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigne
     if (!pkgidx) {
 	return RPMRC_FAIL;
     }
-    if (rpmpkgLock(idxdb->pkgdb, 1))
+    if (rpmidxLock(idxdb, 1))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
     for (i = 0; i < nkeys; i++) {
 	if (!keys[i])
 	    continue;
 	if (rpmidxEraseInternal(idxdb, (const unsigned char *)keys[i], strlen(keys[i]), pkgidx, i)) {
-	    rpmpkgUnlock(idxdb->pkgdb, 1);
+	    rpmidxUnlock(idxdb, 1);
 	    return RPMRC_FAIL;
 	}
     }
-    rpmpkgUnlock(idxdb->pkgdb, 1);
+    rpmidxUnlock(idxdb, 1);
     return RPMRC_OK;
 }
 
 int rpmidxUpdateGeneration(rpmidxdb idxdb)
 {
     unsigned int generation;
-    if (rpmpkgLock(idxdb->pkgdb, 1))
+    if (rpmidxLock(idxdb, 1))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
     if (rpmpkgGetIdxGeneration(idxdb->pkgdb, &generation)) {
-	rpmpkgUnlock(idxdb->pkgdb, 1);
+	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
     if (idxdb->generation != generation) {
 	idxdb->generation = generation;
 	updateGeneration(idxdb);
     }
-    rpmpkgUnlock(idxdb->pkgdb, 1);
+    rpmidxUnlock(idxdb, 1);
     return RPMRC_OK;
 }
 
 int rpmidxStats(rpmidxdb idxdb)
 {
-    if (rpmpkgLock(idxdb->pkgdb, 0))
+    if (rpmidxLock(idxdb, 0))
 	return RPMRC_FAIL;
     if (rpmidxReadHeader(idxdb)) {
-	rpmpkgUnlock(idxdb->pkgdb, 0);
+	rpmidxUnlock(idxdb, 0);
 	return RPMRC_FAIL;
     }
     printf("--- IndexDB Stats\n");
@@ -1174,6 +1190,6 @@ int rpmidxStats(rpmidxdb idxdb)
     printf("Key data size: %u\n", idxdb->keyend);
     printf("Key excess: %u\n", idxdb->keyexcess);
     printf("XMask : 0x%08x\n", idxdb->xmask);
-    rpmpkgUnlock(idxdb->pkgdb, 0);
+    rpmidxUnlock(idxdb, 0);
     return RPMRC_OK;
 }
