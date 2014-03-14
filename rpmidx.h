@@ -17,6 +17,5 @@ int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp,
 int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
 int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
 
-int rpmidxUpdateGeneration(rpmidxdb idxdb);
 int rpmidxStats(rpmidxdb idxdb);
 

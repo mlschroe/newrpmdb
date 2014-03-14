@@ -1148,27 +1148,6 @@ int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigne
     return RPMRC_OK;
 }
 
-int rpmidxUpdateGeneration(rpmidxdb idxdb)
-{
-    unsigned int generation;
-    if (rpmidxLock(idxdb, 1))
-	return RPMRC_FAIL;
-    if (rpmidxReadHeader(idxdb)) {
-	rpmidxUnlock(idxdb, 1);
-	return RPMRC_FAIL;
-    }
-    if (rpmpkgGetIdxGeneration(idxdb->pkgdb, &generation)) {
-	rpmidxUnlock(idxdb, 1);
-	return RPMRC_FAIL;
-    }
-    if (idxdb->generation != generation) {
-	idxdb->generation = generation;
-	updateGeneration(idxdb);
-    }
-    rpmidxUnlock(idxdb, 1);
-    return RPMRC_OK;
-}
-
 int rpmidxStats(rpmidxdb idxdb)
 {
     if (rpmidxLock(idxdb, 0))

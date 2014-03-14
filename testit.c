@@ -158,7 +158,6 @@ writeheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx, unsigned char *blob
   rpmheadfromblob(&h, blob, blobl);
 
   rpmpkgLock(pkgdb, 1);
-  rpmpkgSetIdxGeneration(pkgdb);
   if (rpmpkgPut(pkgdb, pkgidx, blob, blobl))
     {
       perror("rpmpkgPut");
@@ -187,10 +186,6 @@ writeheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx, unsigned char *blob
       if (bn && bn != s)
 	free(bn);
     }
-  rpmpkgClearIdxGeneration(pkgdb);
-  for (i = 0; myidbs[i].name; i++) {
-    rpmidxUpdateGeneration(myidbs[i].idxdb);
-  }
   rpmpkgUnlock(pkgdb, 1);
 }
 
@@ -214,7 +209,6 @@ eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
       int cnt;
       char *s[1];
 
-      rpmpkgSetIdxGeneration(pkgdb);
       rpmheadfromblob(&h, blob, blobl);
       for (i = 0; myidbs[i].name; i++)
 	{
@@ -245,9 +239,6 @@ eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
 	  perror("rpmpkgErase");
 	  exit(1);
 	}
-      rpmpkgClearIdxGeneration(pkgdb);
-      for (i = 0; myidbs[i].name; i++)
-	rpmidxUpdateGeneration(myidbs[i].idxdb);
     }
   rpmpkgUnlock(pkgdb, 1);
 }

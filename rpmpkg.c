@@ -28,7 +28,7 @@ typedef struct rpmpkgdb_s {
     unsigned int locked_shared;
     unsigned int locked_excl;
 
-    int header_ok;
+    int header_ok;		/* header data (e.g. generation) is valid */
     unsigned int generation;
     unsigned int slotnpages;
     unsigned int nextpkgidx;
@@ -46,10 +46,6 @@ typedef struct rpmpkgdb_s {
     char *filename;
     unsigned int fileblks;	/* file size in blks */
     int dofsync;
-
-    unsigned int idxgeneration;
-    int useidxgeneration;
-
 } * rpmpkgdb;
 
 #define SLOTORDER_UNORDERED	0
@@ -150,7 +146,7 @@ static int rpmpkgWriteHeader(rpmpkgdb pkgdb)
 #define BLK_SIZE  16
 #define PAGE_SIZE 4096
 
-/* the first two slots are used for the header */
+/* the first two slots (i.e. 32 bytes) are used for the header */
 #define SLOT_START 2
 
 static inline unsigned int hashpkgidx(unsigned int h)
@@ -676,7 +672,6 @@ static inline int reopen_db(rpmpkgdb pkgdb)
 
 static int rpmpkgGetlock(rpmpkgdb pkgdb, int type)
 {
-    pkgdb->header_ok = 0;
     if (!pkgdb->fd)
 	return RPMRC_FAIL;
     for (;;) {
@@ -703,6 +698,7 @@ int rpmpkgLock(rpmpkgdb pkgdb, int excl)
 	(*lockcntp)++;
 	return RPMRC_OK;
     }
+    pkgdb->header_ok = 0;
     if (rpmpkgGetlock(pkgdb, excl ? LOCK_EX : LOCK_SH)) {
 	return RPMRC_FAIL;
     }
@@ -1093,55 +1089,6 @@ int rpmpkgNextPkgIdx(rpmpkgdb pkgdb, unsigned int *pkgidxp)
     /* no fdatasync needed. also no need to increase the generation count,
      * as the header is always read in */
     rpmpkgUnlock(pkgdb, 1);
-    return RPMRC_OK;
-}
-
-int rpmpkgGetIdxGeneration(rpmpkgdb pkgdb, unsigned int *generationp)
-{
-    if (pkgdb->useidxgeneration) {
-	*generationp = pkgdb->idxgeneration;
-	return RPMRC_OK;
-    }
-    if ((pkgdb->locked_excl || pkgdb->locked_shared) && pkgdb->header_ok) {
-	*generationp = pkgdb->generation;
-	return RPMRC_OK;
-    }
-    if (rpmpkgLock(pkgdb, 0))
-	return RPMRC_FAIL;
-    if (rpmpkgReadHeader(pkgdb)) {
-	rpmpkgUnlock(pkgdb, 0);
-	return RPMRC_FAIL;
-    }
-    *generationp = pkgdb->generation;
-    rpmpkgUnlock(pkgdb, 0);
-    return RPMRC_OK;
-}
-
-int rpmpkgSetIdxGeneration(rpmpkgdb pkgdb)
-{
-    if (pkgdb->useidxgeneration) {
-	return RPMRC_FAIL;
-    }
-    if ((pkgdb->locked_excl || pkgdb->locked_shared) && pkgdb->header_ok) {
-	pkgdb->idxgeneration = pkgdb->generation;
-	pkgdb->useidxgeneration = 1;
-	return RPMRC_OK;
-    }
-    if (rpmpkgLock(pkgdb, 0))
-	return RPMRC_FAIL;
-    if (rpmpkgReadHeader(pkgdb)) {
-	rpmpkgUnlock(pkgdb, 0);
-	return RPMRC_FAIL;
-    }
-    pkgdb->idxgeneration = pkgdb->generation;
-    pkgdb->useidxgeneration = 1;
-    rpmpkgUnlock(pkgdb, 0);
-    return RPMRC_OK;
-}
-
-int rpmpkgClearIdxGeneration(rpmpkgdb pkgdb)
-{
-    pkgdb->useidxgeneration = 0;
     return RPMRC_OK;
 }
 
