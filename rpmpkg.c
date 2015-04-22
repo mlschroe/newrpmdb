@@ -8,7 +8,10 @@
 #include <string.h>
 #include <stdlib.h>
 
-#define RPMRC_FAIL 1
+#include "rpmpkg.h"
+
+#define RPMRC_FAIL 2
+#define RPMRC_NOTFOUND 1
 #define RPMRC_OK 0
 
 typedef struct pkgslot_s {
@@ -67,7 +70,7 @@ static inline void h2le(unsigned int x, unsigned char *p)
 
 /* adler 32 algorithm taken from RFC 1950 */
 #define ADLER32_INIT 1
-unsigned int update_adler32(unsigned int adler, unsigned char *buf, unsigned int len)
+static unsigned int update_adler32(unsigned int adler, unsigned char *buf, unsigned int len)
 {
     unsigned int s1 = adler & 0xffff;
     unsigned int s2 = (adler >> 16) & 0xffff;
@@ -833,7 +836,7 @@ static int rpmpkgGetInternal(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char 
     }
     slot = rpmpkgFindSlot(pkgdb, pkgidx);
     if (!slot) {
-	return RPMRC_OK;	/* no such entry, but not a db error */
+	return RPMRC_NOTFOUND;
     }
     blob = malloc((size_t)slot->blkcnt * BLK_SIZE);
     if (rpmpkgReadblob(pkgdb, pkgidx, slot->blkoff, slot->blkcnt, blob, bloblp, (unsigned int *)0)) {

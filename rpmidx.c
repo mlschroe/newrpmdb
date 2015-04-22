@@ -16,8 +16,9 @@
 #include "rpmidx.h"
 #include "rpmxdb.h"
 
-#define RPMRC_FAIL 1
 #define RPMRC_OK 0
+#define RPMRC_NOTFOUND 1
+#define RPMRC_FAIL 2
 
 typedef struct rpmidxdb_s {
     rpmpkgdb pkgdb;		/* master database */
@@ -105,7 +106,7 @@ static void headslotmapcb(rpmxdb xdb, void *data, void *newaddr, size_t newsize)
     } else {
 	idxdb->head_mapped = newaddr;
 	idxdb->head_mappedlen = idxdb->pagesize;
-	idxdb->slot_mapped = newaddr + idxdb->pagesize;
+	idxdb->slot_mapped = (unsigned char *)newaddr + idxdb->pagesize;
 	idxdb->slot_mappedlen = newsize - idxdb->pagesize;
     }
 }
@@ -812,7 +813,7 @@ static int rpmidxGetInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
     }
     *pkgidxlistp = hits;
     *pkgidxnump = nhits;
-    return RPMRC_OK;
+    return nhits ? RPMRC_OK : RPMRC_NOTFOUND;
 }
 
 static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap)

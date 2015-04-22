@@ -14,8 +14,9 @@
 
 #include "rpmxdb.h"
 
-#define RPMRC_FAIL 1
 #define RPMRC_OK 0
+#define RPMRC_NOTFOUND 1
+#define RPMRC_FAIL 2
 
 typedef struct rpmxdb_s {
     rpmpkgdb pkgdb;             /* master database */
@@ -587,7 +588,6 @@ static int createblob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsig
     if (subtag > 255)
 	return RPMRC_FAIL;
     if (!xdb->firstfree) {
-abort();
 	if (addslotpage(xdb))
 	    return RPMRC_FAIL;
     }
