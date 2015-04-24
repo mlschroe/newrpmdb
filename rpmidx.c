@@ -816,6 +816,33 @@ static int rpmidxGetInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
     return nhits ? RPMRC_OK : RPMRC_NOTFOUND;
 }
 
+static int rpmidxListSort_cmp(const void *a, const void *b)
+{
+    return ((unsigned int *)a)[1] - ((unsigned int *)b)[1];
+}
+
+static void rpmidxListSort(rpmidxdb idxdb, unsigned int *keylist, unsigned int nkeylist, unsigned char *data)
+{
+    unsigned int i, *arr;
+    if (nkeylist < 2 * 2)
+	return;
+    arr = malloc(nkeylist * sizeof(unsigned int));
+    if (!arr)
+	return;
+    for (i = 0; i < nkeylist; i += 2) {
+	arr[i] = i;
+	arr[i + 1] = murmurhash(data + keylist[i], keylist[i + 1]) & idxdb->hmask;
+    }
+    qsort(arr, nkeylist / 2, 2 * sizeof(unsigned int), rpmidxListSort_cmp);
+    for (i = 0; i < nkeylist; i += 2) {
+	unsigned int ai = arr[i];
+	arr[i] = keylist[ai];
+	arr[i + 1] = keylist[ai + 1];
+    }
+    memcpy(keylist, arr, nkeylist * sizeof(unsigned int));
+    free(arr);
+}
+
 static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap)
 {
     unsigned int *keylist = 0;
@@ -857,6 +884,7 @@ static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned 
     }
     if (terminate)
       *terminate = 0;
+    rpmidxListSort(idxdb, keylist, nkeylist, data);
     *keylistp = keylist;
     *nkeylistp = nkeylist;
     *datap = data;

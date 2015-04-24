@@ -76,16 +76,16 @@ static unsigned int update_adler32(unsigned int adler, unsigned char *buf, unsig
     unsigned int s2 = (adler >> 16) & 0xffff;
     int n;
 
-    for (; len >= 5552; len -= 5552, buf += 5552) {
+    for (; len >= 5552; len -= 5552) {
         for (n = 0; n < 5552; n++) {
-            s1 += buf[n];
+            s1 += *buf++;
             s2 += s1; 
         }
         s1 %= 65521;
         s2 %= 65521;
     }   
     for (n = 0; n < len; n++) {
-        s1 += buf[n];
+        s1 += *buf++;
         s2 += s1; 
     }   
     return ((s2 % 65521) << 16) + (s1 % 65521);
@@ -100,6 +100,8 @@ static int rpmpkgReadHeader(rpmpkgdb pkgdb)
     unsigned int generation, slotnpages, nextpkgidx;
     unsigned char header[32];
 
+    if (pkgdb->header_ok)
+	return RPMRC_OK;
     if (pread(pkgdb->fd, header, 32, 0) != 32) {
 	return RPMRC_FAIL;
     }
@@ -459,6 +461,7 @@ static int rpmpkgReadblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blko
     unsigned int bloblen, toread, tstamp;
     off_t fileoff;
     unsigned int adl;
+    int verifyadler = bloblp ? 0 : 1;
 
     /* sanity */
     if (blkcnt <  (BLOBHEAD_SIZE + BLOBTAIL_SIZE + BLK_SIZE - 1) / BLK_SIZE)
@@ -476,24 +479,36 @@ static int rpmpkgReadblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blko
     if (blkcnt != (BLOBHEAD_SIZE + bloblen + BLOBTAIL_SIZE + BLK_SIZE - 1) / BLK_SIZE)
 	return RPMRC_FAIL;	/* bad blob */
     adl = ADLER32_INIT;
-    adl = update_adler32(adl, buf, BLOBHEAD_SIZE);
+    if (verifyadler)
+	adl = update_adler32(adl, buf, BLOBHEAD_SIZE);
     /* read in 64K chunks */
     fileoff += BLOBHEAD_SIZE;
-    for (toread = blkcnt * BLK_SIZE - (BLOBHEAD_SIZE + BLOBTAIL_SIZE); toread;) {
+    toread = blkcnt * BLK_SIZE - BLOBHEAD_SIZE;
+    if (!bloblp)
+	toread -= BLOBTAIL_SIZE;
+    while (toread) {
 	unsigned int chunk = toread > 65536 ? 65536 : toread;
         if (pread(pkgdb->fd, blob, chunk, fileoff) != chunk) {
 	    return RPMRC_FAIL;	/* read error */
 	}
-	adl = update_adler32(adl, blob, chunk);
+	if (verifyadler) {
+	    if (!bloblp)
+		adl = update_adler32(adl, blob, chunk);
+	    else if (toread > BLOBTAIL_SIZE)
+		adl = update_adler32(adl, blob, toread - BLOBTAIL_SIZE > chunk ? chunk : toread - BLOBTAIL_SIZE);
+	}
 	if (bloblp)
 	    blob += chunk;
 	toread -= chunk;
 	fileoff += chunk;
     }
     /* read trailer */
-    if (pread(pkgdb->fd, buf, BLOBTAIL_SIZE, fileoff) != BLOBTAIL_SIZE)
+    if (bloblp) {
+	memcpy(buf, blob - BLOBTAIL_SIZE, BLOBTAIL_SIZE);
+    } else if (pread(pkgdb->fd, buf, BLOBTAIL_SIZE, fileoff) != BLOBTAIL_SIZE) {
 	return RPMRC_FAIL;	/* read error */
-    if (le2h(buf) != adl) {
+    }
+    if (verifyadler && le2h(buf) != adl) {
 	return RPMRC_FAIL;	/* bad blob, adler32 mismatch */
     }
     if (le2h(buf + 4) != bloblen) {
@@ -1123,10 +1138,12 @@ int rpmpkgStats(rpmpkgdb pkgdb)
     return RPMRC_OK;
 }
 
-#if 1
+#if 0
 
 #include "lzo/lzoconf.h"
 #include "lzo/lzo1x.h"
+
+#define BLOBLZO_MAGIC	('L' | 'Z' << 8 | 'O' << 16 | 'B' << 24)
 
 int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned int blobl)
 {
@@ -1143,20 +1160,21 @@ int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsig
     if (!workmem) {
 	return RPMRC_FAIL;
     }
-    lzoblobl = 4 + blobl + blobl / 16 + 64 + 3;
+    lzoblobl = 4 + 4 + blobl + blobl / 16 + 64 + 3;
     lzoblob = malloc(lzoblobl);
     if (!lzoblob) {
 	free(workmem);
 	return RPMRC_FAIL;
     }
-    h2le(blobl, lzoblob);
-    if (lzo1x_1_compress(blob, blobl, lzoblob + 4, &blobl2, workmem) != LZO_E_OK) {
+    h2le(BLOBLZO_MAGIC, lzoblob);
+    h2le(blobl, lzoblob + 4);
+    if (lzo1x_1_compress(blob, blobl, lzoblob + 8, &blobl2, workmem) != LZO_E_OK) {
 	free(workmem);
 	free(lzoblob);
 	return RPMRC_FAIL;
     }
     free(workmem);
-    lzoblobl = 4 + blobl2;
+    lzoblobl = 8 + blobl2;
     if ((rc = rpmpkgPut(pkgdb, pkgidx, lzoblob, lzoblobl)) != RPMRC_OK) {
 	free(lzoblob);
 	return rc;
@@ -1177,20 +1195,24 @@ int rpmpkgGetLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char **blobp, uns
     if ((rc = rpmpkgGet(pkgdb, pkgidx, &lzoblob, &lzoblobl)) != RPMRC_OK)  {
 	return rc;
     }
-    if (lzoblobl < 4) {
+    if (lzoblobl < 8) {
+	return RPMRC_FAIL;
+    }
+    if (le2h(lzoblob) != BLOBLZO_MAGIC) {
+	free(lzoblob);
 	return RPMRC_FAIL;
     }
     if (lzo_init() != LZO_E_OK) {
 	free(lzoblob);
 	return RPMRC_FAIL;
     }
-    blobl = le2h(lzoblob);
+    blobl = le2h(lzoblob + 4);
     blob = malloc(blobl ? blobl : 0);
     if (!blob) {
 	free(lzoblob);
 	return RPMRC_FAIL;
     }
-    if (lzo1x_decompress(lzoblob + 4, lzoblobl - 4, blob, &blobl2, 0) != LZO_E_OK || blobl2 != blobl) {
+    if (lzo1x_decompress(lzoblob + 8, lzoblobl - 8, blob, &blobl2, 0) != LZO_E_OK || blobl2 != blobl) {
 	free(lzoblob);
 	free(blob);
 	return RPMRC_FAIL;
