@@ -14,6 +14,12 @@
 #define RPMRC_NOTFOUND 1
 #define RPMRC_OK 0
 
+#ifdef RPMPKG_LZO
+static int rpmpkgLZOCompress(unsigned char **blobp, unsigned int *bloblp);
+static int rpmpkgLZODecompress(unsigned char **blobp, unsigned int *bloblp);
+#endif
+
+
 typedef struct pkgslot_s {
     unsigned int pkgidx;
     unsigned int blkoff;
@@ -1047,6 +1053,10 @@ int rpmpkgGet(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char **blobp, unsign
     }
     rc = rpmpkgGetInternal(pkgdb, pkgidx, blobp, bloblp);
     rpmpkgUnlock(pkgdb, 0);
+#ifdef RPMPKG_LZO
+    if (!rc)
+	rc = rpmpkgLZODecompress(blobp, bloblp);
+#endif
     return rc;
 }
 
@@ -1059,7 +1069,16 @@ int rpmpkgPut(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned
     }
     if (rpmpkgLock(pkgdb, 1))
 	return RPMRC_FAIL;
+#ifdef RPMPKG_LZO
+    if (rpmpkgLZOCompress(&blob, &blobl)) {
+	rpmpkgUnlock(pkgdb, 1);
+	return RPMRC_FAIL;
+    }
+#endif
     rc = rpmpkgPutInternal(pkgdb, pkgidx, blob, blobl);
+#ifdef RPMPKG_LZO
+    free(blob);
+#endif
     rpmpkgUnlock(pkgdb, 1);
     return rc;
 }
@@ -1138,18 +1157,18 @@ int rpmpkgStats(rpmpkgdb pkgdb)
     return RPMRC_OK;
 }
 
-#if 0
+#ifdef RPMPKG_LZO
 
 #include "lzo/lzoconf.h"
 #include "lzo/lzo1x.h"
 
 #define BLOBLZO_MAGIC	('L' | 'Z' << 8 | 'O' << 16 | 'B' << 24)
 
-int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned int blobl)
+static int rpmpkgLZOCompress(unsigned char **blobp, unsigned int *bloblp)
 {
-    int rc;
-    unsigned char *workmem;
-    unsigned char *lzoblob;
+    unsigned char *blob = *blobp;
+    unsigned int blobl = *bloblp;
+    unsigned char *lzoblob, *workmem;
     unsigned int lzoblobl;
     lzo_uint blobl2;
 
@@ -1174,46 +1193,30 @@ int rpmpkgPutLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsig
 	return RPMRC_FAIL;
     }
     free(workmem);
-    lzoblobl = 8 + blobl2;
-    if ((rc = rpmpkgPut(pkgdb, pkgidx, lzoblob, lzoblobl)) != RPMRC_OK) {
-	free(lzoblob);
-	return rc;
-    }
-    free(lzoblob);
+    *blobp = lzoblob;
+    *bloblp = 8 + blobl2;
     return RPMRC_OK;
 }
 
-int rpmpkgGetLZO(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char **blobp, unsigned int *bloblp)
+static int rpmpkgLZODecompress(unsigned char **blobp, unsigned int *bloblp)
 {
-    int rc;
-    unsigned char *lzoblob, *blob;
-    unsigned int lzoblobl, blobl;
+    unsigned char *lzoblob = *blobp;
+    unsigned int lzoblobl = *bloblp;
+    unsigned char *blob;
+    unsigned int blobl;
     lzo_uint blobl2;
 
-    *blobp = 0;
-    *bloblp = 0;
-    if ((rc = rpmpkgGet(pkgdb, pkgidx, &lzoblob, &lzoblobl)) != RPMRC_OK)  {
-	return rc;
-    }
-    if (lzoblobl < 8) {
+    if (!lzoblob || lzoblobl < 8)
 	return RPMRC_FAIL;
-    }
-    if (le2h(lzoblob) != BLOBLZO_MAGIC) {
-	free(lzoblob);
+    if (le2h(lzoblob) != BLOBLZO_MAGIC)
 	return RPMRC_FAIL;
-    }
-    if (lzo_init() != LZO_E_OK) {
-	free(lzoblob);
+    if (lzo_init() != LZO_E_OK)
 	return RPMRC_FAIL;
-    }
     blobl = le2h(lzoblob + 4);
-    blob = malloc(blobl ? blobl : 0);
-    if (!blob) {
-	free(lzoblob);
+    blob = malloc(blobl ? blobl : 1);
+    if (!blob)
 	return RPMRC_FAIL;
-    }
     if (lzo1x_decompress(lzoblob + 8, lzoblobl - 8, blob, &blobl2, 0) != LZO_E_OK || blobl2 != blobl) {
-	free(lzoblob);
 	free(blob);
 	return RPMRC_FAIL;
     }
