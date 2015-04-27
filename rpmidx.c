@@ -1129,54 +1129,6 @@ int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp,
     return rc;
 }
 
-int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
-{
-    unsigned int i;
-    if (!pkgidx) {
-	return RPMRC_FAIL;
-    }
-    if (rpmidxLock(idxdb, 1))
-	return RPMRC_FAIL;
-    if (rpmidxReadHeader(idxdb)) {
-	rpmidxUnlock(idxdb, 1);
-	return RPMRC_FAIL;
-    }
-    for (i = 0; i < nkeys; i++) {
-	if (!keys[i])
-	    continue;
-	if (rpmidxPutInternal(idxdb, (unsigned char *)keys[i], strlen(keys[i]), pkgidx, i)) {
-	    rpmidxUnlock(idxdb, 1);
-	    return RPMRC_FAIL;
-	}
-    }
-    rpmidxUnlock(idxdb, 1);
-    return RPMRC_OK;
-}
-
-int rpmidxDelStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
-{
-    unsigned int i;
-    if (!pkgidx) {
-	return RPMRC_FAIL;
-    }
-    if (rpmidxLock(idxdb, 1))
-	return RPMRC_FAIL;
-    if (rpmidxReadHeader(idxdb)) {
-	rpmidxUnlock(idxdb, 1);
-	return RPMRC_FAIL;
-    }
-    for (i = 0; i < nkeys; i++) {
-	if (!keys[i])
-	    continue;
-	if (rpmidxDelInternal(idxdb, (const unsigned char *)keys[i], strlen(keys[i]), pkgidx, i)) {
-	    rpmidxUnlock(idxdb, 1);
-	    return RPMRC_FAIL;
-	}
-    }
-    rpmidxUnlock(idxdb, 1);
-    return RPMRC_OK;
-}
-
 int rpmidxStats(rpmidxdb idxdb)
 {
     if (rpmidxLock(idxdb, 0))

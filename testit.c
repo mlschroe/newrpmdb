@@ -170,13 +170,15 @@ writeheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx, unsigned char *blob
 	}
       if (bn && cnt)
 	{
+	  int j;
 	  if (myidbs[i].isarray > 1)
 	    filterheadelements(bn, cnt, myidbs[i].isarray);
-	  if (rpmidxPutStrings(myidbs[i].idxdb, pkgidx, bn, cnt))
-	    {
-	      perror("rpmidxPut");
-	      exit(1);
-	    }
+	  for (j = 0; j < cnt; j++)
+	    if (bn[j] && rpmidxPut(myidbs[i].idxdb, (unsigned char *)bn[j], strlen(bn[j]), pkgidx, j))
+	      {
+	        perror("rpmidxPut");
+	        exit(1);
+	      }
 	}
       if (bn && bn != s)
 	free(bn);
@@ -217,13 +219,15 @@ eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
 	    }
 	  if (bn && cnt)
 	    {
+	      int j;
 	      if (myidbs[i].isarray > 1)
 		filterheadelements(bn, cnt, myidbs[i].isarray);
-	      if (rpmidxDelStrings(myidbs[i].idxdb, pkgidx, bn, cnt))
-		{
-		  perror("rpmidxDel");
-		  exit(1);
-		}
+	      for (j = 0; j < cnt; j++)
+	        if (bn[j] && rpmidxDel(myidbs[i].idxdb, (unsigned char *)bn[j], strlen(bn[j]), pkgidx, j))
+		  {
+		    perror("rpmidxDel");
+		    exit(1);
+		  }
 	    }
 	  if (bn && bn != s)
 	    free(bn);

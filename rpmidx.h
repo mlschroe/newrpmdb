@@ -14,8 +14,5 @@ int rpmidxPut(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsig
 int rpmidxDel(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx);
 int rpmidxList(rpmidxdb idxdb, unsigned int **keylistp, unsigned int *nkeylistp, unsigned char **datap);
 
-int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
-int rpmidxDelStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys);
-
 int rpmidxStats(rpmidxdb idxdb);
 
