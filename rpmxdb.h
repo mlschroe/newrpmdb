@@ -10,7 +10,7 @@ int rpmxdbLock(rpmxdb xdb, int excl);
 int rpmxdbUnlock(rpmxdb xdb, int excl);
 
 int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned int subtag, int flags);
-int rpmxdbEraseBlob(rpmxdb xdb, unsigned int id) ;
+int rpmxdbDelBlob(rpmxdb xdb, unsigned int id) ;
 int rpmxdbMapBlob(rpmxdb xdb, unsigned int id, void (*remapcallback)(rpmxdb xdb, void *data, void *newaddr, size_t newsize), void *remapcallbackdata);
 int rpmxdbUnmapBlob(rpmxdb xdb, unsigned int id);
 int rpmxdbResizeBlob(rpmxdb xdb, unsigned int id, size_t newsize);

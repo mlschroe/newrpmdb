@@ -11,11 +11,6 @@
 #include "rpmidx.h"
 #include "rpmxdb.h"
 
-#if 1
-#define rpmpkgPut rpmpkgPutLZO
-#define rpmpkgGet rpmpkgGetLZO
-#endif
-
 #define TAG_NAME		1000
 #define TAG_BASENAMES           1117
 #define TAG_PROVIDENAME         1047
@@ -224,9 +219,9 @@ eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
 	    {
 	      if (myidbs[i].isarray > 1)
 		filterheadelements(bn, cnt, myidbs[i].isarray);
-	      if (rpmidxEraseStrings(myidbs[i].idxdb, pkgidx, bn, cnt))
+	      if (rpmidxDelStrings(myidbs[i].idxdb, pkgidx, bn, cnt))
 		{
-		  perror("rpmidxErase");
+		  perror("rpmidxDel");
 		  exit(1);
 		}
 	    }
@@ -234,9 +229,9 @@ eraseheader(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int pkgidx)
 	    free(bn);
 	}
       free(blob);
-      if (rpmpkgErase(pkgdb, pkgidx))
+      if (rpmpkgDel(pkgdb, pkgidx))
 	{
-	  perror("rpmpkgErase");
+	  perror("rpmpkgDel");
 	  exit(1);
 	}
     }
@@ -509,9 +504,9 @@ main()
 	  perror("rpmpkgPut");
 	  exit(1);
 	}
-      if (rpmpkgErase(pkgdb, hdrs[i].idx - nhdrs))
+      if (rpmpkgDel(pkgdb, hdrs[i].idx - nhdrs))
 	{
-	  perror("rpmpkgErase");
+	  perror("rpmpkgDel");
 	  exit(1);
 	}
 #else
@@ -532,9 +527,9 @@ main()
     }
   for (i = 0; i < nhdrs; i++)
     {
-      if (rpmpkgErase(pkgdb, hdrs[i].idx - nhdrs))
+      if (rpmpkgDel(pkgdb, hdrs[i].idx - nhdrs))
 	{
-	  perror("rpmpkgErase");
+	  perror("rpmpkgDel");
 	  exit(1);
 	}
     }
@@ -556,9 +551,9 @@ main()
   for (i = 0; i < nhdrs; i++)
     {
 #if 0
-      if (rpmpkgErase(pkgdb, hdrs[i].idx - nhdrs))
+      if (rpmpkgDel(pkgdb, hdrs[i].idx - nhdrs))
 	{
-	  perror("rpmpkgErase");
+	  perror("rpmpkgDel");
 	  exit(1);
 	}
 #else
@@ -576,9 +571,9 @@ main()
 #if 0
   if (xdb)
     for (i = 0; myidbs[i].name; i++)
-      if (rpmidxEraseDbXdb(pkgdb, xdb, myidbs[i].tag))
+      if (rpmidxDelXdb(pkgdb, xdb, myidbs[i].tag))
         {
-	  perror("rpmidxEraseDbXdb");
+	  perror("rpmidxDelXdb");
         }
 #endif
 

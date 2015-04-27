@@ -591,7 +591,7 @@ static int rpmpkgWriteblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blk
     return RPMRC_OK;
 }
 
-static int rpmpkgEraseblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blkoff, unsigned int blkcnt)
+static int rpmpkgDelblob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blkoff, unsigned int blkcnt)
 {
     if (rpmpkgVerifyblob(pkgdb, pkgidx, blkoff, blkcnt))
 	return RPMRC_FAIL;
@@ -624,7 +624,7 @@ static int rpmpkgMoveblob(rpmpkgdb pkgdb, pkgslot *slot, unsigned int newblkoff)
 	if (rpmpkgWriteslot(pkgdb, slot->slotno, pkgidx, newblkoff, blkcnt)) {
 	    return RPMRC_FAIL;
 	}
-	if (rpmpkgEraseblob(pkgdb, pkgidx, blkoff, blkcnt)) {
+	if (rpmpkgDelblob(pkgdb, pkgidx, blkoff, blkcnt)) {
 	    return RPMRC_FAIL;
 	}
 	slot->blkoff = newblkoff;
@@ -915,7 +915,7 @@ static int rpmpkgPutInternal(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char 
     }
     /* erase old blob */
     if (oldslot && oldslot->blkoff) {
-	if (rpmpkgEraseblob(pkgdb, pkgidx, oldslot->blkoff, oldslot->blkcnt)) {
+	if (rpmpkgDelblob(pkgdb, pkgidx, oldslot->blkoff, oldslot->blkcnt)) {
 	    free(pkgdb->slots);
 	    pkgdb->slots = 0;
 	    return RPMRC_FAIL;
@@ -932,7 +932,7 @@ static int rpmpkgPutInternal(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char 
     return RPMRC_OK;
 }
 
-static int rpmpkgEraseInternal(rpmpkgdb pkgdb, unsigned int pkgidx)
+static int rpmpkgDelInternal(rpmpkgdb pkgdb, unsigned int pkgidx)
 {
     pkgslot *slot;
     unsigned int blkoff, blkcnt;
@@ -952,7 +952,7 @@ static int rpmpkgEraseInternal(rpmpkgdb pkgdb, unsigned int pkgidx)
     if (rpmpkgWriteslot(pkgdb, slot->slotno, 0, 0, 0)) {
 	return RPMRC_FAIL;
     }
-    if (rpmpkgEraseblob(pkgdb, pkgidx, slot->blkoff, slot->blkcnt)) {
+    if (rpmpkgDelblob(pkgdb, pkgidx, slot->blkoff, slot->blkcnt)) {
 	return RPMRC_FAIL;
     }
     if (pkgdb->nslots > 1 && slot->blkoff < pkgdb->fileblks / 2) {
@@ -1083,7 +1083,7 @@ int rpmpkgPut(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned char *blob, unsigned
     return rc;
 }
 
-int rpmpkgErase(rpmpkgdb pkgdb, unsigned int pkgidx)
+int rpmpkgDel(rpmpkgdb pkgdb, unsigned int pkgidx)
 {
     int rc;
 
@@ -1092,7 +1092,7 @@ int rpmpkgErase(rpmpkgdb pkgdb, unsigned int pkgidx)
     }
     if (rpmpkgLock(pkgdb, 1))
 	return RPMRC_FAIL;
-    rc = rpmpkgEraseInternal(pkgdb, pkgidx);
+    rc = rpmpkgDelInternal(pkgdb, pkgidx);
     rpmpkgUnlock(pkgdb, 1);
     return rc;
 }

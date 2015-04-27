@@ -711,7 +711,7 @@ static int rpmidxPutInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
     return RPMRC_OK;
 }
 
-static int rpmidxEraseInternal(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx)
+static int rpmidxDelInternal(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx)
 {
     unsigned int keyoff = 0;
     unsigned int keyh = murmurhash(key, keyl);
@@ -1022,7 +1022,7 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     return RPMRC_OK;
 }
 
-int rpmidxEraseDbXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
+int rpmidxDelXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
 {
     unsigned int headslotid, strid;
     if (rpmxdbLock(xdb, 1))
@@ -1035,11 +1035,11 @@ int rpmidxEraseDbXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
 	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
-    if (headslotid && rpmxdbEraseBlob(xdb, headslotid)) {
+    if (headslotid && rpmxdbDelBlob(xdb, headslotid)) {
 	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
-    if (strid && rpmxdbEraseBlob(xdb, strid)) {
+    if (strid && rpmxdbDelBlob(xdb, strid)) {
 	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
@@ -1078,7 +1078,7 @@ int rpmidxPut(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsig
     return RPMRC_OK;
 }
 
-int rpmidxErase(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx)
+int rpmidxDel(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int pkgidx, unsigned int datidx)
 {
     if (!pkgidx || datidx >= 0x80000000) {
 	return RPMRC_FAIL;
@@ -1089,7 +1089,7 @@ int rpmidxErase(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, uns
 	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
-    if (rpmidxEraseInternal(idxdb, key, keyl, pkgidx, datidx)) {
+    if (rpmidxDelInternal(idxdb, key, keyl, pkgidx, datidx)) {
 	rpmidxUnlock(idxdb, 1);
 	return RPMRC_FAIL;
     }
@@ -1153,7 +1153,7 @@ int rpmidxPutStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned 
     return RPMRC_OK;
 }
 
-int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
+int rpmidxDelStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigned int nkeys)
 {
     unsigned int i;
     if (!pkgidx) {
@@ -1168,7 +1168,7 @@ int rpmidxEraseStrings(rpmidxdb idxdb, unsigned int pkgidx, char **keys, unsigne
     for (i = 0; i < nkeys; i++) {
 	if (!keys[i])
 	    continue;
-	if (rpmidxEraseInternal(idxdb, (const unsigned char *)keys[i], strlen(keys[i]), pkgidx, i)) {
+	if (rpmidxDelInternal(idxdb, (const unsigned char *)keys[i], strlen(keys[i]), pkgidx, i)) {
 	    rpmidxUnlock(idxdb, 1);
 	    return RPMRC_FAIL;
 	}
