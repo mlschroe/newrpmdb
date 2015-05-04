@@ -20,6 +20,44 @@
 #define RPMRC_NOTFOUND 1
 #define RPMRC_FAIL 2
 
+/* Index database
+ *
+ *
+ * Layout:
+ *    Header
+ *    Slots
+ *    Keys
+ *
+ * Each slot contains 12 bytes, they are split into a 8 byte
+ * and a 4 byte part:
+ *    4 bytes   key offset + extra tag bits
+ *    4 bytes   data
+ *    4 bytes   data overflow
+ * The slot space first contains all 8 byte parts followed by all of
+ * the 4 byte overflow parts. This is done because most of the time we
+ * do not need the latter.
+ *
+ * If a new (key, pkgidx, datidx) tupel is added, the key is hashed with
+ * the popular murmur hash. The lower bits of the hash determine the start
+ * slot, parts of the higher bits are used as extra key equality check.
+ * The (pkgidx, datidx) pair is encoded in a (data, dataovl) pair, so that
+ * most of the time dataovl is zero.
+ * 
+ * The code then checks the current entry at the start slot. If the key
+ * does not match, it advances to the next slot. If it matches, it also
+ * checks the data part for a match but it remembers the key offset.
+ * If the code found a (key, data, dataovl) match, nothing needs to be done.
+ *
+ * Otherwise, the code arrived at an empty slot. It then adds the key
+ * to the key space if it did not find a matching key, and then puts
+ * the encoded (key, data, dataovl) pair into the slot.
+ *
+ * Deleting a (key, data) pair is done by replacing the slot with a
+ * (-1, -1, 0) dummy entry.
+ *
+ */
+
+
 typedef struct rpmidxdb_s {
     rpmpkgdb pkgdb;		/* master database */
 
@@ -30,32 +68,29 @@ typedef struct rpmidxdb_s {
 
     int rdonly;
 
+    /* xdb support */
     rpmxdb xdb;
     unsigned int xdbtag;
-    unsigned int xdbid_headslot;
-    unsigned int xdbid_str;
-
-    unsigned int pagesize;
+    unsigned int xdbid;
 
     unsigned char *head_mapped;
-    unsigned int   head_mappedlen;
     unsigned char *slot_mapped;
-    unsigned int   slot_mappedlen;
-    unsigned char *str_mapped;
-    unsigned int   str_mappedlen;
+    unsigned char *key_mapped;
+    unsigned int key_size;
+    unsigned int file_size;
 
     unsigned int generation;
-    unsigned int slotoffset;
     unsigned int nslots;
     unsigned int usedslots;
     unsigned int dummyslots;
 
-    unsigned int keyoffset;
     unsigned int keyend;
     unsigned int keyexcess;
 
     unsigned int hmask;
     unsigned int xmask;
+
+    unsigned int pagesize;
 } * rpmidxdb;
 
 static inline unsigned int le2h(unsigned char *p) 
@@ -86,67 +121,71 @@ static inline void h2lea(unsigned int x, unsigned char *p)
 /*** Header management ***/
 
 #define IDXDB_MAGIC     ('R' | 'p' << 8 | 'm' << 16 | 'I' << 24)
+#define IDXDB_VERSION	0
 
-/* header
- * generation
- * nslots
- * usedslots
- * dummyslots
- * xmask
- * keyoffset
- * keyend
- * keyexcess
- */
+#define IDXDB_OFFSET_MAGIC	0
+#define IDXDB_OFFSET_VERSION	4
+#define IDXDB_OFFSET_GENERATION	8
+#define IDXDB_OFFSET_NSLOTS	12
+#define IDXDB_OFFSET_USEDSLOTS	16
+#define IDXDB_OFFSET_DUMMYSLOTS	20
+#define IDXDB_OFFSET_XMASK	24
+#define IDXDB_OFFSET_KEYEND	28
+#define IDXDB_OFFSET_KEYEXCESS	32
 
-static void headslotmapcb(rpmxdb xdb, void *data, void *newaddr, size_t newsize) {
-    rpmidxdb idxdb = data;
-    if (!newaddr) {
-	idxdb->head_mapped = idxdb->slot_mapped = 0;
-	idxdb->head_mappedlen = idxdb->slot_mappedlen = 0;
+#define IDXDB_SLOT_OFFSET	64
+#define IDXDB_KEY_CHUNKSIZE	4096
+
+/* XDB subids */
+
+#define IDXDB_XDB_SUBTAG		0
+#define IDXDB_XDB_SUBTAG_REBUILD	1
+
+static void set_mapped(rpmidxdb idxdb, unsigned char *addr, unsigned int size)
+{
+    if (addr) {
+	idxdb->head_mapped = addr;
+	idxdb->slot_mapped = addr + IDXDB_SLOT_OFFSET; 
+	idxdb->key_mapped = addr + IDXDB_SLOT_OFFSET + idxdb->nslots * 12;
+	idxdb->key_size = size - (IDXDB_SLOT_OFFSET + idxdb->nslots * 12);
+	idxdb->file_size = size;
     } else {
-	idxdb->head_mapped = newaddr;
-	idxdb->head_mappedlen = idxdb->pagesize;
-	idxdb->slot_mapped = (unsigned char *)newaddr + idxdb->pagesize;
-	idxdb->slot_mappedlen = newsize - idxdb->pagesize;
+	idxdb->head_mapped = idxdb->slot_mapped = idxdb->key_mapped = 0;
+	idxdb->file_size = idxdb->key_size = 0;
     }
 }
 
-static void keymapcb(rpmxdb xdb, void *data, void *newaddr, size_t newsize) {
+/* XDB callbacks */
+static void mapcb(rpmxdb xdb, void *data, void *newaddr, size_t newsize) {
     rpmidxdb idxdb = data;
-    idxdb->str_mapped = newaddr;
-    idxdb->str_mappedlen = newsize;
+    set_mapped(idxdb, newaddr, newsize);
 }
 
 static int rpmidxMap(rpmidxdb idxdb)
 {
     struct stat stb;
     if (idxdb->xdb) {
-	if (rpmxdbMapBlob(idxdb->xdb, idxdb->xdbid_headslot, headslotmapcb, idxdb)) {
-	    return RPMRC_FAIL;
-	}
-	if (rpmxdbMapBlob(idxdb->xdb, idxdb->xdbid_str, keymapcb, idxdb)) {
-	    rpmxdbUnmapBlob(idxdb->xdb, idxdb->xdbid_headslot);
+	if (rpmxdbMapBlob(idxdb->xdb, idxdb->xdbid, mapcb, idxdb)) {
 	    return RPMRC_FAIL;
 	}
     } else {
+	size_t size;
+	void *mapped;
 	if (fstat(idxdb->fd, &stb)) {
 	    return RPMRC_FAIL;
 	}
-	if ((stb.st_size & (idxdb->pagesize - 1)) != 0) {
+	size = stb.st_size;
+	if (size < 4096) {
 	    return RPMRC_FAIL;
 	}
-	if (stb.st_size < idxdb->pagesize * 3) {
-	    return RPMRC_FAIL;
-	}
-	idxdb->head_mapped = mmap(0, stb.st_size, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, idxdb->fd, 0);
-	if (idxdb->head_mapped == MAP_FAILED) {
+	/* round up for mmap */
+	size = (size + idxdb->pagesize - 1) & ~(idxdb->pagesize - 1);
+	mapped = mmap(0, size, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, idxdb->fd, 0);
+	if (mapped == MAP_FAILED) {
 	    idxdb->head_mapped = 0;
 	    return RPMRC_FAIL;
 	}
-	/* we don't yet know how to distribute the mapping, so assign everything to head for now */
-	idxdb->head_mappedlen = stb.st_size;
-	idxdb->slot_mapped = idxdb->str_mapped = 0;
-	idxdb->slot_mappedlen = idxdb->str_mappedlen = 0;
+	set_mapped(idxdb, mapped, stb.st_size);
     }
     return RPMRC_OK;
 }
@@ -156,51 +195,45 @@ static void rpmidxUnmap(rpmidxdb idxdb)
     if (!idxdb->head_mapped)
 	return;
     if (idxdb->xdb) {
-	rpmxdbUnmapBlob(idxdb->xdb, idxdb->xdbid_headslot);
-	rpmxdbUnmapBlob(idxdb->xdb, idxdb->xdbid_str);
+	rpmxdbUnmapBlob(idxdb->xdb, idxdb->xdbid);
     } else {
-	munmap(idxdb->head_mapped, idxdb->head_mappedlen + idxdb->slot_mappedlen + idxdb->str_mappedlen);
-	idxdb->head_mapped = idxdb->slot_mapped = idxdb->str_mapped = 0;
-	idxdb->head_mappedlen = idxdb->slot_mappedlen = idxdb->str_mappedlen = 0;
+	size_t size = idxdb->file_size;
+	/* round up for munmap */
+	size = (size + idxdb->pagesize - 1) & ~(idxdb->pagesize - 1);
+	munmap(idxdb->head_mapped, size);
+	set_mapped(idxdb, 0, 0);
     }
 }
 
 static int rpmidxReadHeader(rpmidxdb idxdb)
 {
     if (idxdb->head_mapped) {
-	if (le2ha(idxdb->head_mapped + 4) == idxdb->generation) {
+	if (le2ha(idxdb->head_mapped + IDXDB_OFFSET_GENERATION) == idxdb->generation) {
 	    return RPMRC_OK;
 	}
 	rpmidxUnmap(idxdb);
     }
+    idxdb->nslots = 0;
     if (rpmidxMap(idxdb))
 	return RPMRC_FAIL;
-    if (le2ha(idxdb->head_mapped) != IDXDB_MAGIC) {
+
+    if (le2ha(idxdb->head_mapped + IDXDB_OFFSET_MAGIC) != IDXDB_MAGIC) {
 	rpmidxUnmap(idxdb);
 	return RPMRC_FAIL;
     }
-
-    idxdb->generation = le2ha(idxdb->head_mapped + 4);
-    idxdb->slotoffset = le2ha(idxdb->head_mapped + 8);
-    idxdb->nslots     = le2ha(idxdb->head_mapped + 12);
-    idxdb->usedslots  = le2ha(idxdb->head_mapped + 16);
-    idxdb->dummyslots = le2ha(idxdb->head_mapped + 20);
-    idxdb->xmask      = le2ha(idxdb->head_mapped + 24);
-    idxdb->keyoffset  = le2ha(idxdb->head_mapped + 28);
-    idxdb->keyend     = le2ha(idxdb->head_mapped + 32);
-    idxdb->keyexcess  = le2ha(idxdb->head_mapped + 36);
+    idxdb->generation = le2ha(idxdb->head_mapped + IDXDB_OFFSET_GENERATION);
+    idxdb->nslots     = le2ha(idxdb->head_mapped + IDXDB_OFFSET_NSLOTS);
+    idxdb->usedslots  = le2ha(idxdb->head_mapped + IDXDB_OFFSET_USEDSLOTS);
+    idxdb->dummyslots = le2ha(idxdb->head_mapped + IDXDB_OFFSET_DUMMYSLOTS);
+    idxdb->xmask      = le2ha(idxdb->head_mapped + IDXDB_OFFSET_XMASK);
+    idxdb->keyend     = le2ha(idxdb->head_mapped + IDXDB_OFFSET_KEYEND);
+    idxdb->keyexcess  = le2ha(idxdb->head_mapped + IDXDB_OFFSET_KEYEXCESS);
 
     idxdb->hmask = idxdb->nslots - 1;
 
-    if (!idxdb->slot_mapped) {
-	/* fixup mapped */
-	idxdb->slot_mapped = idxdb->head_mapped + idxdb->slotoffset;
-	idxdb->str_mapped = idxdb->head_mapped + idxdb->keyoffset;
-	idxdb->slot_mappedlen = idxdb->keyoffset - idxdb->pagesize;
-	idxdb->str_mappedlen = idxdb->head_mappedlen - idxdb->keyoffset;
-	idxdb->head_mappedlen = idxdb->pagesize;
-    }
-
+    /* now that we know nslots we can split between slots and keys */
+    idxdb->key_mapped = idxdb->slot_mapped + idxdb->nslots * 12;
+    idxdb->key_size = idxdb->file_size - (IDXDB_SLOT_OFFSET + idxdb->nslots * 12);
     return RPMRC_OK;
 }
 
@@ -208,42 +241,47 @@ static int rpmidxWriteHeader(rpmidxdb idxdb)
 {
     if (!idxdb->head_mapped)
 	return RPMRC_FAIL;
-    h2lea(IDXDB_MAGIC,       idxdb->head_mapped);
-    h2lea(idxdb->generation, idxdb->head_mapped + 4);
-    h2lea(idxdb->slotoffset, idxdb->head_mapped + 8);
-    h2lea(idxdb->nslots,     idxdb->head_mapped + 12);
-    h2lea(idxdb->usedslots,  idxdb->head_mapped + 16);
-    h2lea(idxdb->dummyslots, idxdb->head_mapped + 20);
-    h2lea(idxdb->xmask,      idxdb->head_mapped + 24);
-    h2lea(idxdb->keyoffset,  idxdb->head_mapped + 28);
-    h2lea(idxdb->keyend,     idxdb->head_mapped + 32);
-    h2lea(idxdb->keyexcess,  idxdb->head_mapped + 36);
+    h2lea(IDXDB_MAGIC,       idxdb->head_mapped + IDXDB_OFFSET_MAGIC);
+    h2lea(IDXDB_VERSION,     idxdb->head_mapped + IDXDB_OFFSET_VERSION);
+    h2lea(idxdb->generation, idxdb->head_mapped + IDXDB_OFFSET_GENERATION);
+    h2lea(idxdb->nslots,     idxdb->head_mapped + IDXDB_OFFSET_NSLOTS);
+    h2lea(idxdb->usedslots,  idxdb->head_mapped + IDXDB_OFFSET_USEDSLOTS);
+    h2lea(idxdb->dummyslots, idxdb->head_mapped + IDXDB_OFFSET_DUMMYSLOTS);
+    h2lea(idxdb->xmask,      idxdb->head_mapped + IDXDB_OFFSET_XMASK);
+    h2lea(idxdb->keyend,     idxdb->head_mapped + IDXDB_OFFSET_KEYEND);
+    h2lea(idxdb->keyexcess,  idxdb->head_mapped + IDXDB_OFFSET_KEYEXCESS);
     return RPMRC_OK;
 }
 
 static inline void updateGeneration(rpmidxdb idxdb)
 {
-   h2lea(idxdb->generation, idxdb->head_mapped + 4);
+   h2lea(idxdb->generation, idxdb->head_mapped + IDXDB_OFFSET_GENERATION);
 }
 
 static inline void updateUsedslots(rpmidxdb idxdb)
 {
-   h2lea(idxdb->usedslots, idxdb->head_mapped + 16);
+   h2lea(idxdb->usedslots, idxdb->head_mapped + IDXDB_OFFSET_USEDSLOTS);
 }
 
 static inline void updateDummyslots(rpmidxdb idxdb)
 {
-   h2lea(idxdb->dummyslots, idxdb->head_mapped + 20);
+   h2lea(idxdb->dummyslots, idxdb->head_mapped + IDXDB_OFFSET_DUMMYSLOTS);
 }
 
 static inline void updateKeyend(rpmidxdb idxdb)
 {
-   h2lea(idxdb->keyend, idxdb->head_mapped + 32);
+   h2lea(idxdb->keyend, idxdb->head_mapped + IDXDB_OFFSET_KEYEND);
 }
 
 static inline void updateKeyexcess(rpmidxdb idxdb)
 {
-   h2lea(idxdb->keyexcess, idxdb->head_mapped + 36);
+   h2lea(idxdb->keyexcess, idxdb->head_mapped + IDXDB_OFFSET_KEYEXCESS);
+}
+
+static inline void bumpGeneration(rpmidxdb idxdb)
+{
+  idxdb->generation++;
+  updateGeneration(idxdb);
 }
 
 static int createempty(rpmidxdb idxdb, off_t off, size_t size)
@@ -338,7 +376,7 @@ static inline int equalkey(rpmidxdb idxdb, unsigned int off, const unsigned char
     unsigned char *p;
     if (off + keyl + 1 > idxdb->keyend)
 	return 0;
-    p = idxdb->str_mapped + off;
+    p = idxdb->key_mapped + off;
     if (keyl && keyl < 255) {
 	if (*p != keyl)
 	    return 0;
@@ -359,39 +397,41 @@ static inline int equalkey(rpmidxdb idxdb, unsigned int off, const unsigned char
 
 static int addkeypage(rpmidxdb idxdb) {
     unsigned char *newaddr;
-    unsigned int oldmappedlen;
+    unsigned int addsize = IDXDB_KEY_CHUNKSIZE;
 
+    if (addsize < idxdb->pagesize)
+	addsize = idxdb->pagesize;
     if (idxdb->xdb) {
-	if (rpmxdbResizeBlob(idxdb->xdb, idxdb->xdbid_str, idxdb->str_mappedlen + idxdb->pagesize))
+	if (rpmxdbResizeBlob(idxdb->xdb, idxdb->xdbid, idxdb->file_size + addsize))
 	    return RPMRC_FAIL;
-	return RPMRC_OK;
+    } else {
+	/* don't use ftruncate because we want to create a "backed" page */
+	size_t oldsize, newsize;
+	if (createempty(idxdb, idxdb->file_size, addsize))
+	    return RPMRC_FAIL;
+	oldsize = idxdb->file_size;
+	newsize = idxdb->file_size + addsize;
+	/* round up for mremap */
+	oldsize = (oldsize + idxdb->pagesize - 1) & ~(idxdb->pagesize - 1);
+	newsize = (newsize + idxdb->pagesize - 1) & ~(idxdb->pagesize - 1);
+	newaddr = mremap(idxdb->head_mapped, oldsize, newsize, MREMAP_MAYMOVE);
+	if (newaddr == MAP_FAILED)
+	    return RPMRC_FAIL;
+	set_mapped(idxdb, newaddr, idxdb->file_size + addsize);
     }
-    /* we don't use ftruncate because we want to create a "backed" page */
-    oldmappedlen = idxdb->head_mappedlen + idxdb->slot_mappedlen + idxdb->str_mappedlen;
-    if (createempty(idxdb, oldmappedlen, idxdb->pagesize))
-	return RPMRC_FAIL;
-    newaddr = mremap(idxdb->head_mapped, oldmappedlen, oldmappedlen + idxdb->pagesize, MREMAP_MAYMOVE);
-    if (newaddr == MAP_FAILED)
-	return RPMRC_FAIL;
-    if (newaddr != idxdb->head_mapped) {
-	idxdb->head_mapped = newaddr;
-	idxdb->slot_mapped = idxdb->head_mapped + idxdb->head_mappedlen;
-	idxdb->str_mapped = idxdb->slot_mapped + idxdb->slot_mappedlen;
-    }
-    idxdb->str_mappedlen += idxdb->pagesize;
     return RPMRC_OK;
 }
 
 static int addnewkey(rpmidxdb idxdb, const unsigned char *key, unsigned int keyl, unsigned int *keyoffp)
 {
     int hl = keylsize(keyl);
-    while (idxdb->str_mappedlen - idxdb->keyend < hl + keyl) {
+    while (idxdb->key_size - idxdb->keyend < hl + keyl) {
 	if (addkeypage(idxdb))
 	    return RPMRC_FAIL;
     }
-    encodekeyl(idxdb->str_mapped + idxdb->keyend, keyl);
+    encodekeyl(idxdb->key_mapped + idxdb->keyend, keyl);
     if (keyl)
-	memcpy(idxdb->str_mapped + idxdb->keyend + hl, key, keyl);
+	memcpy(idxdb->key_mapped + idxdb->keyend + hl, key, keyl);
     *keyoffp = idxdb->keyend;
     idxdb->keyend += hl + keyl;
     updateKeyend(idxdb);
@@ -486,10 +526,11 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 {
     struct rpmidxdb_s nidxdb_s, *nidxdb;
     char *tmpname = 0;
-    unsigned int i, nslots, maxkeysize, slotsize, newlen;
+    unsigned int i, nslots;
     unsigned int keyend, keyoff, xmask;
     unsigned char *done;
     unsigned char *ent;
+    unsigned int file_size, key_size, xfile_size;
 
     nidxdb = &nidxdb_s;
     memset(nidxdb, 0, sizeof(*nidxdb));
@@ -505,7 +546,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	}
     }
 
-    /* don't trust usedslots and dummyslots */
+    /* don't trust usedslots */
     nslots = 0;
     for (i = 0, ent = idxdb->slot_mapped; i < idxdb->nslots; i++, ent += 8) {
 	unsigned int x = le2ha(ent);
@@ -519,58 +560,55 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     nslots *= 4;
     nidxdb->nslots = nslots;
     nidxdb->hmask = nslots - 1;
+
     nidxdb->pagesize = sysconf(_SC_PAGE_SIZE);
-    nidxdb->slotoffset = nidxdb->pagesize;
-    slotsize = (nslots * 12 + nidxdb->pagesize - 1) & ~(nidxdb->pagesize - 1);
-    maxkeysize = (idxdb->keyend + nidxdb->pagesize - 1) & ~(nidxdb->pagesize - 1);
-    if (maxkeysize < nidxdb->pagesize)
-	maxkeysize = nidxdb->pagesize;
-    for (xmask = 0x00010000; xmask < maxkeysize + 2 * nidxdb->pagesize; xmask <<= 1)
+
+    key_size = idxdb->keyend;
+    if (key_size < IDXDB_KEY_CHUNKSIZE)
+	key_size = IDXDB_KEY_CHUNKSIZE;
+    file_size = IDXDB_SLOT_OFFSET + nslots * 12 + key_size;
+
+    /* round to next page size */
+    if (file_size & (nidxdb->pagesize - 1)) {
+	unsigned int add = nidxdb->pagesize - (file_size & (nidxdb->pagesize - 1));
+	file_size += add;
+	key_size += add;
+    }
+
+    /* leave at least 8192 bytes headroom for the key space */
+    for (xmask = 0x00010000; xmask < key_size + 8192; xmask <<= 1)
       ;
     xmask = ~(xmask - 1);
     nidxdb->xmask = xmask;
 
-    newlen = nidxdb->pagesize + slotsize + maxkeysize;
-    nidxdb->keyoffset = nidxdb->slotoffset + slotsize;
-    keyend = 1;
-
     if (idxdb->xdb) {
 	nidxdb->xdb = idxdb->xdb;
 	nidxdb->xdbtag = idxdb->xdbtag;
-	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid_headslot, idxdb->xdbtag, 0 + 2, RPMXDB_CREAT|RPMXDB_TRUNC)) {
+	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG_REBUILD, RPMXDB_CREAT|RPMXDB_TRUNC)) {
 	    return RPMRC_FAIL;
 	}
-	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_headslot, nidxdb->pagesize + slotsize)) {
-	    return RPMRC_FAIL;
-	}
-	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid_str, idxdb->xdbtag, 1 + 2, RPMXDB_CREAT|RPMXDB_TRUNC)) {
-	    return RPMRC_FAIL;
-	}
-	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_str, maxkeysize)) {
+	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid, file_size)) {
 	    return RPMRC_FAIL;
 	}
 	if (rpmidxMap(nidxdb)) {
 	    return RPMRC_FAIL;
 	}
     } else {
-	if (createempty(nidxdb, 0, newlen)) {
+	void *mapped;
+	if (createempty(nidxdb, 0, file_size)) {
 	    close(nidxdb->fd);
 	    unlink(tmpname);
 	    free(tmpname);
 	    return RPMRC_FAIL;
 	}
-	nidxdb->head_mapped = mmap(0, newlen, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, nidxdb->fd, 0);
-	if (nidxdb->head_mapped == MAP_FAILED) {
+	mapped = mmap(0, file_size, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, nidxdb->fd, 0);
+	if (mapped == MAP_FAILED) {
 	    close(nidxdb->fd);
 	    unlink(tmpname);
 	    free(tmpname);
 	    return RPMRC_FAIL;
 	}
-	nidxdb->head_mappedlen = nidxdb->pagesize;
-	nidxdb->slot_mapped = nidxdb->head_mapped + nidxdb->head_mappedlen;
-	nidxdb->slot_mappedlen = slotsize;
-	nidxdb->str_mapped = nidxdb->slot_mapped + nidxdb->slot_mappedlen;
-	nidxdb->str_mappedlen = maxkeysize;
+	set_mapped(nidxdb, mapped, file_size);
     }
 
     done = calloc(idxdb->nslots / 8 + 1, 1);
@@ -581,6 +619,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	free(tmpname);
 	return RPMRC_FAIL;
     }
+    keyend = 1;
     for (i = 0, ent = idxdb->slot_mapped; i < idxdb->nslots; i++, ent += 8) {
 	unsigned int x = le2ha(ent);
 	unsigned char *key;
@@ -592,33 +631,33 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	    continue;	/* we already did that one */
 	}
 	x &= ~idxdb->xmask;
-	key = idxdb->str_mapped + x;
+	key = idxdb->key_mapped + x;
 	keyl = decodekeyl(key, &hl);
 	keyoff = keyend;
 	keyend += hl + keyl;
-	memcpy(nidxdb->str_mapped + keyoff, key, hl + keyl);
+	memcpy(nidxdb->key_mapped + keyoff, key, hl + keyl);
 	copykeyentries(key + hl, keyl, idxdb, x, nidxdb, keyoff, done);
     }
     free(done);
     nidxdb->keyend = keyend;
     rpmidxWriteHeader(nidxdb);
     rpmidxUnmap(nidxdb);
-    keyend = (keyend + 2 * nidxdb->pagesize) & ~(nidxdb->pagesize - 1);
-    if (nidxdb->keyoffset + keyend < newlen) {
+
+    /* shrink if we have excessive key space */
+    xfile_size = file_size - key_size + keyend + IDXDB_KEY_CHUNKSIZE;
+    xfile_size = (xfile_size + nidxdb->pagesize - 1) & ~(nidxdb->pagesize - 1);
+    if (xfile_size < file_size) {
 	if (nidxdb->xdb) {
-	    rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid_str, keyend);
+	    rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid, xfile_size);
 	} else {
-	    ftruncate(nidxdb->fd, nidxdb->keyoffset + keyend);
+	    ftruncate(nidxdb->fd, xfile_size);
 	}
     }
     rpmidxUnmap(idxdb);
     if (idxdb->xdb) {
-	if (rpmxdbRenameBlob(nidxdb->xdb, nidxdb->xdbid_headslot, idxdb->xdbtag, 0))
+	if (rpmxdbRenameBlob(nidxdb->xdb, nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG))
 	    return RPMRC_FAIL;
-	idxdb->xdbid_headslot = nidxdb->xdbid_headslot;
-	if (rpmxdbRenameBlob(nidxdb->xdb, nidxdb->xdbid_str, idxdb->xdbtag, 1))
-	    return RPMRC_FAIL;
-	idxdb->xdbid_str = nidxdb->xdbid_str;
+	idxdb->xdbid = nidxdb->xdbid;
     } else {
 	if (rename(tmpname, idxdb->filename)) {
 	    close(nidxdb->fd);
@@ -631,6 +670,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     }
     if (rpmidxReadHeader(idxdb))
 	return RPMRC_FAIL;
+    bumpGeneration(idxdb);
     return RPMRC_OK;
 }
 
@@ -667,10 +707,10 @@ static int rpmidxPutInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
     for (h = keyh & hmask;; h = (h + hh++) & hmask) {
 	ent = idxdb->slot_mapped + 8 * h;
 	x = le2ha(ent);
-	if (x == 0)
+	if (x == 0)		/* reached an empty slot */
 	    break;
 	if (x == -1) {
-	    freeh = h;
+	    freeh = h;		/* found a dummy slot. Remember the position */
 	    continue;
 	}
 	if (!keyoff) {
@@ -703,11 +743,16 @@ static int rpmidxPutInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
     } else {
 	h = freeh;
 	ent = idxdb->slot_mapped + 8 * h;
+	if (idxdb->dummyslots) {
+	    idxdb->dummyslots--;
+	    updateDummyslots(idxdb);
+	}
     }
     h2lea(keyoff, ent);
     h2lea(data, ent + 4);
     if (ovldata)
 	h2lea(ovldata, idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h);
+    bumpGeneration(idxdb);
     return RPMRC_OK;
 }
 
@@ -744,7 +789,7 @@ static int rpmidxDelInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
 	}
 	if (keyoff != x)
 	    continue;
-	/* string matches, check data/ovldata */
+	/* key matches, check data/ovldata */
 	if (le2ha(ent + 4) != data) {
 	    otherusers = 1;
 	    continue;
@@ -753,21 +798,24 @@ static int rpmidxDelInternal(rpmidxdb idxdb, const unsigned char *key, unsigned 
 	    otherusers = 1;
 	    continue;
 	}
-	/* convert entry to a dummy slot */
+	/* found a match. convert entry to a dummy slot */
 	h2lea(-1, ent);
 	h2lea(-1, ent + 4);
 	if (ovldata)
 	    h2lea(0, idxdb->slot_mapped + idxdb->nslots * 8 + 4 * h);
 	idxdb->dummyslots++;
 	updateDummyslots(idxdb);
-	/* continue searching */
+	/* continue searching (so that we find other users of the key...) */
     }
     if (keyoff && !otherusers) {
+	/* key is no longer in use. free it */
 	int hl = keylsize(keyl);
-	memset(idxdb->str_mapped + (keyoff & ~xmask), 0, hl + keyl);
+	memset(idxdb->key_mapped + (keyoff & ~xmask), 0, hl + keyl);
 	idxdb->keyexcess += hl + keyl;
 	updateKeyexcess(idxdb);
     }
+    if (keyoff)
+	bumpGeneration(idxdb);
     return RPMRC_OK;
 }
 
@@ -852,7 +900,7 @@ static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned 
     data = malloc(idxdb->keyend + 1);	/* +1 so we can terminate the last key */
     if (!data)
 	return RPMRC_FAIL;
-    memcpy(data, idxdb->str_mapped, idxdb->keyend);
+    memcpy(data, idxdb->key_mapped, idxdb->keyend);
     keylist = malloc(16 * sizeof(*keylist));
     if (!keylist) {
 	free(data);
@@ -895,16 +943,12 @@ static int rpmidxListInternal(rpmidxdb idxdb, unsigned int **keylistp, unsigned 
 static int rpmidxInitInternal(rpmidxdb idxdb)
 {
     if (idxdb->xdb) {
-	unsigned int headslotid, strid;
-	if (rpmxdbFindBlob(idxdb->xdb, &headslotid, idxdb->xdbtag, 0, 0)) {
+	unsigned int id;
+	if (rpmxdbFindBlob(idxdb->xdb, &id, idxdb->xdbtag, IDXDB_XDB_SUBTAG, 0)) {
 	    return RPMRC_FAIL;
 	}
-	if (rpmxdbFindBlob(idxdb->xdb, &strid, idxdb->xdbtag, 1, 0)) {
-	    return RPMRC_FAIL;
-	}
-	if (headslotid && strid) {
-	    idxdb->xdbid_headslot = headslotid;
-	    idxdb->xdbid_str = strid;
+	if (id) {
+	    idxdb->xdbid = id;
 	    return RPMRC_OK;	/* somebody else was faster */
 	}
     } else {
@@ -985,16 +1029,12 @@ int rpmidxOpen(rpmidxdb *idxdbp, rpmpkgdb pkgdb, const char *filename, int flags
 int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
 {
     rpmidxdb idxdb;
-    unsigned int headslotid, strid;
+    unsigned int id;
     *idxdbp = 0;
     
     if (rpmxdbLock(xdb, 0))
 	return RPMRC_FAIL;
-    if (rpmxdbFindBlob(xdb, &headslotid, xdbtag, 0, 0)) {
-	rpmxdbUnlock(xdb, 0);
-	return RPMRC_FAIL;
-    }
-    if (rpmxdbFindBlob(xdb, &strid, xdbtag, 1, 0)) {
+    if (rpmxdbFindBlob(xdb, &id, xdbtag, IDXDB_XDB_SUBTAG, 0)) {
 	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
     }
@@ -1006,11 +1046,10 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     idxdb->fd = -1;
     idxdb->xdb = xdb;
     idxdb->xdbtag = xdbtag;
-    idxdb->xdbid_headslot = headslotid;
-    idxdb->xdbid_str = strid;
+    idxdb->xdbid = id;
     idxdb->pkgdb = pkgdb;
     idxdb->pagesize = sysconf(_SC_PAGE_SIZE);
-    if (!headslotid || !strid) {
+    if (!id) {
 	if (rpmidxInit(idxdb)) {
 	    free(idxdb);
 	    rpmxdbUnlock(xdb, 0);
@@ -1024,22 +1063,14 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
 
 int rpmidxDelXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
 {
-    unsigned int headslotid, strid;
+    unsigned int id;
     if (rpmxdbLock(xdb, 1))
 	return RPMRC_FAIL;
-    if (rpmxdbFindBlob(xdb, &headslotid, xdbtag, 0, 0)) {
+    if (rpmxdbFindBlob(xdb, &id, xdbtag, IDXDB_XDB_SUBTAG, 0)) {
 	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
-    if (rpmxdbFindBlob(xdb, &strid, xdbtag, 1, 0)) {
-	rpmxdbUnlock(xdb, 1);
-	return RPMRC_FAIL;
-    }
-    if (headslotid && rpmxdbDelBlob(xdb, headslotid)) {
-	rpmxdbUnlock(xdb, 1);
-	return RPMRC_FAIL;
-    }
-    if (strid && rpmxdbDelBlob(xdb, strid)) {
+    if (id && rpmxdbDelBlob(xdb, id)) {
 	rpmxdbUnlock(xdb, 1);
 	return RPMRC_FAIL;
     }
@@ -1139,7 +1170,7 @@ int rpmidxStats(rpmidxdb idxdb)
     }
     printf("--- IndexDB Stats\n");
     if (idxdb->xdb) {
-	printf("Xdb tag: %d, ids: %d %d\n", idxdb->xdbtag, idxdb->xdbid_headslot, idxdb->xdbid_str);
+	printf("Xdb tag: %d, id: %d\n", idxdb->xdbtag, idxdb->xdbid);
     } else {
 	printf("Filename: %s\n", idxdb->filename);
     }
@@ -1147,7 +1178,7 @@ int rpmidxStats(rpmidxdb idxdb)
     printf("Slots: %u\n", idxdb->nslots);
     printf("Used slots: %u\n", idxdb->usedslots);
     printf("Dummy slots: %u\n", idxdb->dummyslots);
-    printf("Key data size: %u\n", idxdb->keyend);
+    printf("Key data size: %u, left %u\n", idxdb->keyend, idxdb->key_size - idxdb->keyend);
     printf("Key excess: %u\n", idxdb->keyexcess);
     printf("XMask : 0x%08x\n", idxdb->xmask);
     rpmidxUnlock(idxdb, 0);

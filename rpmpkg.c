@@ -100,23 +100,33 @@ static unsigned int update_adler32(unsigned int adler, unsigned char *buf, unsig
 /*** Header management ***/
 
 #define PKGDB_MAGIC	('R' | 'p' << 8 | 'm' << 16 | 'P' << 24)
+#define PKGDB_VERSION		0
+
+/* must be a multiple of SLOT_SIZE! */
+#define PKGDB_HEADER_SIZE	32
+
+#define PKGDB_OFFSET_MAGIC	0
+#define PKGDB_OFFSET_VERSION	4
+#define PKGDB_OFFSET_GENERATION	8
+#define PKGDB_OFFSET_SLOTNPAGES 12
+#define PKGDB_OFFSET_NEXTPKGIDX 16
 
 static int rpmpkgReadHeader(rpmpkgdb pkgdb)
 {
     unsigned int generation, slotnpages, nextpkgidx;
-    unsigned char header[32];
+    unsigned char header[PKGDB_HEADER_SIZE];
 
     if (pkgdb->header_ok)
 	return RPMRC_OK;
-    if (pread(pkgdb->fd, header, 32, 0) != 32) {
+    if (pread(pkgdb->fd, header, PKGDB_HEADER_SIZE, 0) != PKGDB_HEADER_SIZE) {
 	return RPMRC_FAIL;
     }
-    if (le2h(header) != PKGDB_MAGIC) {
+    if (le2h(header + PKGDB_OFFSET_MAGIC) != PKGDB_MAGIC) {
 	return RPMRC_FAIL;
     }
-    generation = le2h(header + 4);
-    slotnpages = le2h(header + 8);
-    nextpkgidx = le2h(header + 12);
+    generation = le2h(header + PKGDB_OFFSET_GENERATION);
+    slotnpages = le2h(header + PKGDB_OFFSET_SLOTNPAGES);
+    nextpkgidx = le2h(header + PKGDB_OFFSET_NEXTPKGIDX);
     /* free slots if our internal data no longer matches */
     if (pkgdb->slots && (pkgdb->generation != generation || pkgdb->slotnpages != slotnpages)) {
 	free(pkgdb->slots);
@@ -135,12 +145,13 @@ static int rpmpkgReadHeader(rpmpkgdb pkgdb)
 
 static int rpmpkgWriteHeader(rpmpkgdb pkgdb)
 {
-    unsigned char header[32];
+    unsigned char header[PKGDB_HEADER_SIZE];
     memset(header, 0, sizeof(header));
-    h2le(PKGDB_MAGIC, header);
-    h2le(pkgdb->generation, header + 4);
-    h2le(pkgdb->slotnpages, header + 8);
-    h2le(pkgdb->nextpkgidx, header + 12);
+    h2le(PKGDB_MAGIC, header + PKGDB_OFFSET_MAGIC);
+    h2le(PKGDB_VERSION, header + PKGDB_OFFSET_VERSION);
+    h2le(pkgdb->generation, header + PKGDB_OFFSET_GENERATION);
+    h2le(pkgdb->slotnpages, header + PKGDB_OFFSET_SLOTNPAGES);
+    h2le(pkgdb->nextpkgidx, header + PKGDB_OFFSET_NEXTPKGIDX);
     if (pwrite(pkgdb->fd, header, sizeof(header), 0) != sizeof(header)) {
 	return RPMRC_FAIL;
     }
@@ -157,8 +168,8 @@ static int rpmpkgWriteHeader(rpmpkgdb pkgdb)
 #define BLK_SIZE  16
 #define PAGE_SIZE 4096
 
-/* the first two slots (i.e. 32 bytes) are used for the header */
-#define SLOT_START 2
+/* the first slots (i.e. 32 bytes) are used for the header */
+#define SLOT_START (PKGDB_HEADER_SIZE / SLOT_SIZE)
 
 static inline unsigned int hashpkgidx(unsigned int h)
 {
