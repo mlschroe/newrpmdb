@@ -525,7 +525,6 @@ static inline void copykeyentries(const unsigned char *key, unsigned int keyl, r
 static int rpmidxRebuildInternal(rpmidxdb idxdb)
 {
     struct rpmidxdb_s nidxdb_s, *nidxdb;
-    char *tmpname = 0;
     unsigned int i, nslots;
     unsigned int keyend, keyoff, xmask;
     unsigned char *done;
@@ -534,19 +533,9 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 
     nidxdb = &nidxdb_s;
     memset(nidxdb, 0, sizeof(*nidxdb));
-    if (!idxdb->xdb) {
-	tmpname = malloc(strlen(idxdb->filename) + 8);
-	if (!tmpname)
-	    return RPMRC_FAIL;
-	sprintf(tmpname, "%s-XXXXXX", idxdb->filename);
-	nidxdb->fd = mkstemp(tmpname);
-	if (nidxdb->fd == -1) {
-	    free(tmpname);
-	    return RPMRC_FAIL;
-	}
-    }
+    nidxdb->pagesize = sysconf(_SC_PAGE_SIZE);
 
-    /* don't trust usedslots */
+    /* calculate nslots the hard way, don't trust usedslots */
     nslots = 0;
     for (i = 0, ent = idxdb->slot_mapped; i < idxdb->nslots; i++, ent += 8) {
 	unsigned int x = le2ha(ent);
@@ -558,11 +547,11 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     while (nslots & (nslots - 1))
 	nslots = nslots & (nslots - 1);
     nslots *= 4;
+
     nidxdb->nslots = nslots;
     nidxdb->hmask = nslots - 1;
 
-    nidxdb->pagesize = sysconf(_SC_PAGE_SIZE);
-
+    /* calculate the new key space size */
     key_size = idxdb->keyend;
     if (key_size < IDXDB_KEY_CHUNKSIZE)
 	key_size = IDXDB_KEY_CHUNKSIZE;
@@ -575,12 +564,13 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	key_size += add;
     }
 
-    /* leave at least 8192 bytes headroom for the key space */
-    for (xmask = 0x00010000; xmask < key_size + 8192; xmask <<= 1)
+    /* calculate xmask, leave at least 8192 bytes headroom for key space */
+    for (xmask = 0x00010000; xmask && xmask < key_size + 8192; xmask <<= 1)
       ;
-    xmask = ~(xmask - 1);
+    xmask = xmask ? ~(xmask - 1) : 0;
     nidxdb->xmask = xmask;
 
+    /* create new database */
     if (idxdb->xdb) {
 	nidxdb->xdb = idxdb->xdb;
 	nidxdb->xdbtag = idxdb->xdbtag;
@@ -595,28 +585,40 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	}
     } else {
 	void *mapped;
+	nidxdb->filename = malloc(strlen(idxdb->filename) + 8);
+	if (!nidxdb->filename)
+	    return RPMRC_FAIL;
+	sprintf(nidxdb->filename, "%s-XXXXXX", idxdb->filename);
+	nidxdb->fd = mkstemp(nidxdb->filename);
+	if (nidxdb->fd == -1) {
+	    free(nidxdb->filename);
+	    return RPMRC_FAIL;
+	}
 	if (createempty(nidxdb, 0, file_size)) {
 	    close(nidxdb->fd);
-	    unlink(tmpname);
-	    free(tmpname);
+	    unlink(nidxdb->filename);
+	    free(nidxdb->filename);
 	    return RPMRC_FAIL;
 	}
 	mapped = mmap(0, file_size, idxdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, nidxdb->fd, 0);
 	if (mapped == MAP_FAILED) {
 	    close(nidxdb->fd);
-	    unlink(tmpname);
-	    free(tmpname);
+	    unlink(nidxdb->filename);
+	    free(nidxdb->filename);
 	    return RPMRC_FAIL;
 	}
 	set_mapped(nidxdb, mapped, file_size);
     }
 
+    /* copy all entries */
     done = calloc(idxdb->nslots / 8 + 1, 1);
     if (!done) {
 	rpmidxUnmap(nidxdb);
-	close(nidxdb->fd);
-	unlink(tmpname);
-	free(tmpname);
+	if (!idxdb->xdb) {
+	    close(nidxdb->fd);
+	    unlink(nidxdb->filename);
+	    free(nidxdb->filename);
+	}
 	return RPMRC_FAIL;
     }
     keyend = 1;
@@ -640,10 +642,11 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     }
     free(done);
     nidxdb->keyend = keyend;
+    nidxdb->generation = idxdb->generation + 1;
     rpmidxWriteHeader(nidxdb);
     rpmidxUnmap(nidxdb);
 
-    /* shrink if we have excessive key space */
+    /* shrink if we have allocated excessive key space */
     xfile_size = file_size - key_size + keyend + IDXDB_KEY_CHUNKSIZE;
     xfile_size = (xfile_size + nidxdb->pagesize - 1) & ~(nidxdb->pagesize - 1);
     if (xfile_size < file_size) {
@@ -653,24 +656,25 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	    ftruncate(nidxdb->fd, xfile_size);
 	}
     }
+
+    /* now switch over to new database */
     rpmidxUnmap(idxdb);
     if (idxdb->xdb) {
 	if (rpmxdbRenameBlob(nidxdb->xdb, nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG))
 	    return RPMRC_FAIL;
 	idxdb->xdbid = nidxdb->xdbid;
     } else {
-	if (rename(tmpname, idxdb->filename)) {
+	if (rename(nidxdb->filename, idxdb->filename)) {
 	    close(nidxdb->fd);
-	    unlink(tmpname);
-	    free(tmpname);
+	    unlink(nidxdb->filename);
+	    free(nidxdb->filename);
 	    return RPMRC_FAIL;
 	}
-	free(tmpname);
+	free(nidxdb->filename);
 	idxdb->fd = nidxdb->fd;
     }
     if (rpmidxReadHeader(idxdb))
 	return RPMRC_FAIL;
-    bumpGeneration(idxdb);
     return RPMRC_OK;
 }
 

@@ -616,31 +616,31 @@ static int rpmpkgDelBlob(rpmpkgdb pkgdb, unsigned int pkgidx, unsigned int blkof
 
 static int rpmpkgMoveBlob(rpmpkgdb pkgdb, pkgslot *slot, unsigned int newblkoff)
 {
-	unsigned int pkgidx = slot->pkgidx;
-	unsigned int blkoff = slot->blkoff;
-	unsigned int blkcnt = slot->blkcnt;
-	unsigned char *blob;
-	unsigned int tstamp, blobl;
+    unsigned int pkgidx = slot->pkgidx;
+    unsigned int blkoff = slot->blkoff;
+    unsigned int blkcnt = slot->blkcnt;
+    unsigned char *blob;
+    unsigned int tstamp, blobl;
 
-	blob = malloc((size_t)blkcnt * BLK_SIZE);
-	if (rpmpkgReadBlob(pkgdb, pkgidx, blkoff, blkcnt, blob, &blobl, &tstamp)) {
-	    free(blob);
-	    return RPMRC_FAIL;
-	}
-	if (rpmpkgWriteBlob(pkgdb, pkgidx, newblkoff, blkcnt, blob, blobl, tstamp)) {
-	    free(blob);
-	    return RPMRC_FAIL;
-	}
+    blob = malloc((size_t)blkcnt * BLK_SIZE);
+    if (rpmpkgReadBlob(pkgdb, pkgidx, blkoff, blkcnt, blob, &blobl, &tstamp)) {
 	free(blob);
-	if (rpmpkgWriteslot(pkgdb, slot->slotno, pkgidx, newblkoff, blkcnt)) {
-	    return RPMRC_FAIL;
-	}
-	if (rpmpkgDelBlob(pkgdb, pkgidx, blkoff, blkcnt)) {
-	    return RPMRC_FAIL;
-	}
-	slot->blkoff = newblkoff;
-	pkgdb->slotorder = SLOTORDER_UNORDERED;
-	return RPMRC_OK;
+	return RPMRC_FAIL;
+    }
+    if (rpmpkgWriteBlob(pkgdb, pkgidx, newblkoff, blkcnt, blob, blobl, tstamp)) {
+	free(blob);
+	return RPMRC_FAIL;
+    }
+    free(blob);
+    if (rpmpkgWriteslot(pkgdb, slot->slotno, pkgidx, newblkoff, blkcnt)) {
+	return RPMRC_FAIL;
+    }
+    if (rpmpkgDelBlob(pkgdb, pkgidx, blkoff, blkcnt)) {
+	return RPMRC_FAIL;
+    }
+    slot->blkoff = newblkoff;
+    pkgdb->slotorder = SLOTORDER_UNORDERED;
+    return RPMRC_OK;
 }
 
 static int rpmpkgAddSlotPage(rpmpkgdb pkgdb)
