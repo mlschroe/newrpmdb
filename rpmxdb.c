@@ -175,7 +175,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
 	    slot->blobtag = le2ha(pp + 4);
 	    slot->startpage = le2ha(pp + 8);
 	    slot->pagecnt = le2ha(pp + 12);
-	    if (slot->pagecnt == 0 && slot->startpage)
+	    if (slot->pagecnt == 0 && slot->startpage)	/* empty but used slot? */
 		slot->startpage = slotnpages;
 	    if (!slot->startpage) {
 		*lastfreep = slotno;
@@ -603,6 +603,7 @@ static int addslotpage(rpmxdb xdb)
 
     if (xdb->firstfree)
 	return RPMRC_FAIL;
+
     /* move first blob if needed */
     nslots = xdb->nslots;
     for (i = xdb->slots[0].next; i != nslots; i = slot->next) {
@@ -625,6 +626,7 @@ static int addslotpage(rpmxdb xdb)
     if (rpmxdbWriteEmptySlotpage(xdb, xdb->slotnpages)) {
 	return RPMRC_FAIL;
     }
+    /* remap slots */
     newmappedlen = xdb->slotnpages * xdb->pagesize + xdb->pagesize;
     newmappedlen = (newmappedlen + xdb->systempagesize - 1) & ~(xdb->systempagesize - 1);
     newaddr = mremap(xdb->mapped, xdb->mappedlen, newmappedlen, MREMAP_MAYMOVE);
@@ -632,6 +634,8 @@ static int addslotpage(rpmxdb xdb)
 	return RPMRC_FAIL;
     xdb->mapped = newaddr;
     xdb->mappedlen = newmappedlen;
+
+    /* update the header */
     xdb->slotnpages++;
     xdb->generation++;
     rpmxdbWriteHeader(xdb);
@@ -863,9 +867,10 @@ int rpmxdbResizeBlob(rpmxdb xdb, unsigned int id, size_t newsize)
 	if (slot->remapcallback)
 	    slot->remapcallback(xdb, slot->remapcallbackdata, slot->mapped, slot->pagecnt * xdb->pagesize);
     } else {
+	/* need to relocate to a new page area */
 	if (moveblob(xdb, slot, newpagecnt)) {
 	    rpmxdbUnlock(xdb, 1);
-	    return RPMRC_OK;
+	    return RPMRC_FAIL;
 	}
     }
     rpmxdbUnlock(xdb, 1);
@@ -910,8 +915,16 @@ int rpmxdbUnmapBlob(rpmxdb xdb, unsigned int id)
     struct xdb_slot *slot;
     if (!id)
 	return RPMRC_OK;
-    if (id >= xdb->nslots)
+    if (rpmxdbLock(xdb, 0))
+        return RPMRC_FAIL;
+    if (rpmxdbReadHeader(xdb)) {
+	rpmxdbUnlock(xdb, 0);
+        return RPMRC_FAIL;
+    }
+    if (id >= xdb->nslots) {
+	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
+    }
     slot = xdb->slots + id;
     if (slot->mapped) {
 	unmapslot(xdb, slot);
@@ -919,6 +932,7 @@ int rpmxdbUnmapBlob(rpmxdb xdb, unsigned int id)
     }
     slot->remapcallback = 0;
     slot->remapcallbackdata = 0;
+    rpmxdbUnlock(xdb, 0);
     return RPMRC_OK;
 }
 
