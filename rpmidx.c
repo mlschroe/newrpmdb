@@ -1162,7 +1162,7 @@ int rpmidxStats(rpmidxdb idxdb)
     printf("Dummy slots: %u\n", idxdb->dummyslots);
     printf("Key data size: %u, left %u\n", idxdb->keyend, idxdb->key_size - idxdb->keyend);
     printf("Key excess: %u\n", idxdb->keyexcess);
-    printf("XMask : 0x%08x\n", idxdb->xmask);
+    printf("XMask: 0x%08x\n", idxdb->xmask);
     rpmidxUnlock(idxdb, 0);
     return RPMRC_OK;
 }
