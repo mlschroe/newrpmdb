@@ -28,6 +28,7 @@ typedef struct rpmxdb_s {
     unsigned int pagesize;
     unsigned int generation;
     unsigned int slotnpages;
+    unsigned int usergeneration;
 
     unsigned char *mapped;
     unsigned int mappedlen;
@@ -81,6 +82,7 @@ static inline void h2lea(unsigned int x, unsigned char *p)
 #define XDB_OFFSET_GENERATION	8
 #define XDB_OFFSET_SLOTNPAGES	12
 #define XDB_OFFSET_PAGESIZE	16
+#define XDB_OFFSET_USERGENERATION	20
 
 /* must be multiple of SLOT_SIZE */
 #define XDB_HEADER_SIZE		32
@@ -111,7 +113,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
 {
     struct xdb_slot *slot;
     unsigned int header[XDB_HEADER_SIZE / sizeof(unsigned int)];
-    unsigned int slotnpages, pagesize, generation;
+    unsigned int slotnpages, pagesize, generation, usergeneration;
     unsigned int page, *lastfreep;
     unsigned char *pageptr;
     struct xdb_slot **usedslots, *lastslot;
@@ -136,6 +138,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     generation = le2ha((unsigned char *)header + XDB_OFFSET_GENERATION);
     slotnpages = le2ha((unsigned char *)header + XDB_OFFSET_SLOTNPAGES);
     pagesize = le2ha((unsigned char *)header + XDB_OFFSET_PAGESIZE);
+    usergeneration = le2ha((unsigned char *)header + XDB_OFFSET_USERGENERATION);
     if (!slotnpages || !pagesize || stb.st_size % pagesize != 0)
 	return RPMRC_FAIL;
     xdb->pagesize = pagesize;
@@ -211,6 +214,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     free(usedslots);
     xdb->generation = generation;
     xdb->slotnpages = slotnpages;
+    xdb->usergeneration = usergeneration;
     return RPMRC_OK;
 }
 
@@ -996,6 +1000,44 @@ void rpmxdbSetFsync(rpmxdb xdb, int dofsync)
     xdb->dofsync = dofsync;
 }
 
+int rpmxdbIsRdonly(rpmxdb xdb)
+{
+    return xdb->rdonly;
+}
+
+int rpmxdbSetUserGeneration(rpmxdb xdb, unsigned int usergeneration)
+{
+    if (rpmxdbLock(xdb, 1))
+        return RPMRC_FAIL;
+    if (rpmxdbReadHeader(xdb)) {
+	rpmxdbUnlock(xdb, 1);
+        return RPMRC_FAIL;
+    }
+    /* sync before the update */
+    if (xdb->dofsync && fdatasync(xdb->fd)) {
+	rpmxdbUnlock(xdb, 1);
+	return RPMRC_FAIL;
+    }
+    xdb->usergeneration = usergeneration;
+    xdb->generation++;
+    rpmxdbWriteHeader(xdb);
+    rpmxdbUnlock(xdb, 1);
+    return RPMRC_OK;
+}
+
+int rpmxdbGetUserGeneration(rpmxdb xdb, unsigned int *usergenerationp)
+{
+    if (rpmxdbLock(xdb, 0))
+        return RPMRC_FAIL;
+    if (rpmxdbReadHeader(xdb)) {
+	rpmxdbUnlock(xdb, 0);
+        return RPMRC_FAIL;
+    }
+    *usergenerationp = xdb->usergeneration;
+    rpmxdbUnlock(xdb, 0);
+    return RPMRC_OK;
+}
+
 int rpmxdbStats(rpmxdb xdb)
 {
     struct xdb_slot *slot;
@@ -1014,7 +1056,7 @@ int rpmxdbStats(rpmxdb xdb)
     printf("Slot pages: %d\n", xdb->slotnpages);
     printf("Blob pages: %d\n", xdb->usedblobpages);
     printf("Free pages: %d\n", xdb->slots[nslots].startpage - xdb->usedblobpages - xdb->slotnpages);
-    printf("Pagesize: %d\n", xdb->pagesize);
+    printf("Pagesize: %d / %d\n", xdb->pagesize, xdb->systempagesize);
     for (i = 1, slot = xdb->slots + i; i < nslots; i++, slot++) {
 	if (!slot->startpage)
 	    continue;

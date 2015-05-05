@@ -1140,6 +1140,19 @@ int rpmpkgNextPkgIdx(rpmpkgdb pkgdb, unsigned int *pkgidxp)
     return RPMRC_OK;
 }
 
+int rpmpkgGeneration(rpmpkgdb pkgdb, unsigned int *generationp)
+{
+    if (rpmpkgLock(pkgdb, 0))
+	return RPMRC_FAIL;
+    if (rpmpkgReadHeader(pkgdb)) {
+	rpmpkgUnlock(pkgdb, 0);
+	return RPMRC_FAIL;
+    }
+    *generationp = pkgdb->generation;
+    rpmpkgUnlock(pkgdb, 0);
+    return RPMRC_OK;
+}
+
 int rpmpkgStats(rpmpkgdb pkgdb)
 {
     unsigned int usedblks = 0;

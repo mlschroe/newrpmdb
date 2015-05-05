@@ -14,6 +14,7 @@ int rpmpkgDel(rpmpkgdb pkgdb, unsigned int pkgidx);
 int rpmpkgList(rpmpkgdb pkgdb, unsigned int **pkgidxlistp, unsigned int *npkgidxlistp);
 
 int rpmpkgNextPkgIdx(rpmpkgdb pkgdb, unsigned int *pkgidxp);
+int rpmpkgGeneration(rpmpkgdb pkgdb, unsigned int *generationp);
 
 int rpmpkgStats(rpmpkgdb pkgdb);
 
