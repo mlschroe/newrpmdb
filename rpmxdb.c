@@ -322,6 +322,17 @@ int rpmxdbUnlock(rpmxdb xdb, int excl)
     return rpmpkgUnlock(xdb->pkgdb, excl);
 }
 
+int rpmxdbLockReadHeader(rpmxdb xdb, int excl)
+{
+    if (rpmxdbLock(xdb, excl))
+	return RPMRC_FAIL;
+    if (rpmxdbReadHeader(xdb)) {
+	rpmxdbUnlock(xdb, excl);
+        return RPMRC_FAIL;
+    }
+    return RPMRC_OK;
+}
+
 static int rpmxdbInit(rpmxdb xdb)
 {
     int rc;
@@ -713,12 +724,8 @@ int rpmxdbFindBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsigned
 {
     struct xdb_slot *slot;
     unsigned int i, nslots;
-    if (rpmxdbLock(xdb, flags ? 1 : 0))
+    if (rpmxdbLockReadHeader(xdb, flags ? 1 : 0))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, flags ? 1 : 0);
-        return RPMRC_FAIL;
-    }
     nslots = xdb->nslots;
     slot = 0;
     for (i = xdb->slots[0].next; i != nslots; i = slot->next) {
@@ -750,12 +757,8 @@ int rpmxdbDelBlob(rpmxdb xdb, unsigned int id)
     struct xdb_slot *slot;
     if (!id)
 	return RPMRC_FAIL;
-    if (rpmxdbLock(xdb, 1))
+    if (rpmxdbLockReadHeader(xdb, 1))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 1);
-        return RPMRC_FAIL;
-    }
     if (id >= xdb->nslots) {
 	rpmxdbUnlock(xdb, 1);
         return RPMRC_FAIL;
@@ -806,12 +809,8 @@ int rpmxdbResizeBlob(rpmxdb xdb, unsigned int id, size_t newsize)
     unsigned int oldpagecnt, newpagecnt;
     if (!id)
 	return RPMRC_FAIL;
-    if (rpmxdbLock(xdb, 1))
+    if (rpmxdbLockReadHeader(xdb, 1))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 1);
-        return RPMRC_FAIL;
-    }
     if (id >= xdb->nslots) {
 	rpmxdbUnlock(xdb, 1);
         return RPMRC_FAIL;
@@ -886,12 +885,8 @@ int rpmxdbMapBlob(rpmxdb xdb, unsigned int id, void (*remapcallback)(rpmxdb xdb,
     struct xdb_slot *slot;
     if (!id || !remapcallback)
 	return RPMRC_FAIL;
-    if (rpmxdbLock(xdb, 0))
+    if (rpmxdbLockReadHeader(xdb, 0))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 0);
-        return RPMRC_FAIL;
-    }
     if (id >= xdb->nslots) {
 	rpmxdbUnlock(xdb, 0);
         return RPMRC_FAIL;
@@ -919,12 +914,8 @@ int rpmxdbUnmapBlob(rpmxdb xdb, unsigned int id)
     struct xdb_slot *slot;
     if (!id)
 	return RPMRC_OK;
-    if (rpmxdbLock(xdb, 0))
+    if (rpmxdbLockReadHeader(xdb, 0))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 0);
-        return RPMRC_FAIL;
-    }
     if (id >= xdb->nslots) {
 	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
@@ -947,12 +938,8 @@ int rpmxdbRenameBlob(rpmxdb xdb, unsigned int id, unsigned int blobtag, unsigned
 
     if (!id || subtag > 255)
 	return RPMRC_FAIL;
-    if (rpmxdbLock(xdb, 1))
+    if (rpmxdbLockReadHeader(xdb, 1))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 1);
-        return RPMRC_FAIL;
-    }
     if (id >= xdb->nslots) {
 	rpmxdbUnlock(xdb, 1);
         return RPMRC_FAIL;
@@ -1007,12 +994,8 @@ int rpmxdbIsRdonly(rpmxdb xdb)
 
 int rpmxdbSetUserGeneration(rpmxdb xdb, unsigned int usergeneration)
 {
-    if (rpmxdbLock(xdb, 1))
+    if (rpmxdbLockReadHeader(xdb, 1))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 1);
-        return RPMRC_FAIL;
-    }
     /* sync before the update */
     if (xdb->dofsync && fdatasync(xdb->fd)) {
 	rpmxdbUnlock(xdb, 1);
@@ -1027,12 +1010,8 @@ int rpmxdbSetUserGeneration(rpmxdb xdb, unsigned int usergeneration)
 
 int rpmxdbGetUserGeneration(rpmxdb xdb, unsigned int *usergenerationp)
 {
-    if (rpmxdbLock(xdb, 0))
+    if (rpmxdbLockReadHeader(xdb, 0))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 0);
-        return RPMRC_FAIL;
-    }
     *usergenerationp = xdb->usergeneration;
     rpmxdbUnlock(xdb, 0);
     return RPMRC_OK;
@@ -1043,12 +1022,8 @@ int rpmxdbStats(rpmxdb xdb)
     struct xdb_slot *slot;
     unsigned int i, nslots;
 
-    if (rpmxdbLock(xdb, 0))
+    if (rpmxdbLockReadHeader(xdb, 0))
         return RPMRC_FAIL;
-    if (rpmxdbReadHeader(xdb)) {
-	rpmxdbUnlock(xdb, 0);
-        return RPMRC_FAIL;
-    }
     nslots = xdb->nslots;
     printf("--- XDB Stats\n");
     printf("Filename: %s\n", xdb->filename);
