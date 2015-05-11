@@ -132,6 +132,7 @@ static inline void h2lea(unsigned int x, unsigned char *p)
 #define IDXDB_OFFSET_XMASK	24
 #define IDXDB_OFFSET_KEYEND	28
 #define IDXDB_OFFSET_KEYEXCESS	32
+#define IDXDB_OFFSET_OBSOLETE	36
 
 #define IDXDB_SLOT_OFFSET	64
 #define IDXDB_KEY_CHUNKSIZE	4096
@@ -160,12 +161,18 @@ static void mapcb(rpmxdb xdb, void *data, void *newaddr, size_t newsize) {
     set_mapped((rpmidxdb)data, newaddr, (unsigned int)newsize);
 }
 
+static int rpmidxReadHeader(rpmidxdb idxdb);
+
 static int rpmidxMap(rpmidxdb idxdb)
 {
     struct stat stb;
     if (idxdb->xdb) {
-	if (rpmxdbMapBlob(idxdb->xdb, idxdb->xdbid, mapcb, idxdb))
+	if (rpmxdbMapBlob(idxdb->xdb, idxdb->xdbid, idxdb->rdonly ? O_RDONLY : O_RDWR, mapcb, idxdb))
 	    return RPMRC_FAIL;
+	if (idxdb->file_size < 4096) {
+	    rpmxdbUnmapBlob(idxdb->xdb, idxdb->xdbid);
+	    return RPMRC_FAIL;
+	}
     } else {
 	size_t size;
 	void *mapped;
@@ -199,6 +206,30 @@ static void rpmidxUnmap(rpmidxdb idxdb)
     }
 }
 
+static int rpmidxReadHeader(rpmidxdb idxdb);
+
+static int rpmidxHandleObsolete(rpmidxdb idxdb)
+{
+    int nfd;
+    struct stat stb1, stb2;
+
+    if (fstat(idxdb->fd, &stb1))
+	return RPMRC_FAIL;
+    nfd = open(idxdb->filename, idxdb->rdonly ? O_RDONLY : O_RDWR, 0);
+    if (nfd == -1)
+	return RPMRC_FAIL;
+    if (fstat(nfd, &stb2)) {
+	close(nfd);
+	return RPMRC_FAIL;
+    }
+    if (stb1.st_dev == stb2.st_dev && stb1.st_ino == stb2.st_ino)
+	return RPMRC_FAIL;		/* openend the same obsolete file */
+    rpmidxUnmap(idxdb);
+    close(idxdb->fd);
+    idxdb->fd = nfd;
+    return rpmidxReadHeader(idxdb);	/* re-try with new file */
+}
+
 static int rpmidxReadHeader(rpmidxdb idxdb)
 {
     if (idxdb->head_mapped) {
@@ -214,6 +245,8 @@ static int rpmidxReadHeader(rpmidxdb idxdb)
 	rpmidxUnmap(idxdb);
 	return RPMRC_FAIL;
     }
+    if (!idxdb->xdb && le2ha(idxdb->head_mapped + IDXDB_OFFSET_OBSOLETE))
+	return rpmidxHandleObsolete(idxdb);
     idxdb->generation = le2ha(idxdb->head_mapped + IDXDB_OFFSET_GENERATION);
     idxdb->nslots     = le2ha(idxdb->head_mapped + IDXDB_OFFSET_NSLOTS);
     idxdb->usedslots  = le2ha(idxdb->head_mapped + IDXDB_OFFSET_USEDSLOTS);
@@ -225,6 +258,10 @@ static int rpmidxReadHeader(rpmidxdb idxdb)
     idxdb->hmask = idxdb->nslots - 1;
 
     /* now that we know nslots we can split between slots and keys */
+    if (idxdb->file_size <= IDXDB_SLOT_OFFSET + idxdb->nslots * 12) {
+	rpmidxUnmap(idxdb);	/* too small, somthing is wrong */
+	return RPMRC_FAIL;
+    }
     idxdb->key_mapped = idxdb->slot_mapped + idxdb->nslots * 12;
     idxdb->key_size = idxdb->file_size - (IDXDB_SLOT_OFFSET + idxdb->nslots * 12);
     return RPMRC_OK;
@@ -560,7 +597,7 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     if (idxdb->xdb) {
 	nidxdb->xdb = idxdb->xdb;
 	nidxdb->xdbtag = idxdb->xdbtag;
-	if (rpmxdbFindBlob(nidxdb->xdb, &nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG_REBUILD, RPMXDB_CREAT|RPMXDB_TRUNC)) {
+	if (rpmxdbLookupBlob(nidxdb->xdb, &nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG_REBUILD, O_CREAT|O_TRUNC)) {
 	    return RPMRC_FAIL;
 	}
 	if (rpmxdbResizeBlob(nidxdb->xdb, nidxdb->xdbid, file_size)) {
@@ -644,9 +681,9 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
     }
 
     /* now switch over to new database */
-    rpmidxUnmap(idxdb);
     if (idxdb->xdb) {
-	if (rpmxdbRenameBlob(nidxdb->xdb, nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG))
+	rpmidxUnmap(idxdb);
+	if (rpmxdbRenameBlob(nidxdb->xdb, &nidxdb->xdbid, idxdb->xdbtag, IDXDB_XDB_SUBTAG))
 	    return RPMRC_FAIL;
 	idxdb->xdbid = nidxdb->xdbid;
     } else {
@@ -656,7 +693,13 @@ static int rpmidxRebuildInternal(rpmidxdb idxdb)
 	    free(nidxdb->filename);
 	    return RPMRC_FAIL;
 	}
+	if (idxdb->head_mapped) {
+	    h2lea(1, idxdb->head_mapped + IDXDB_OFFSET_OBSOLETE);
+	    bumpGeneration(idxdb);
+	    rpmidxUnmap(idxdb);
+	}
 	free(nidxdb->filename);
+	close(idxdb->fd);
 	idxdb->fd = nidxdb->fd;
     }
     if (rpmidxReadHeader(idxdb))
@@ -940,18 +983,19 @@ static int rpmidxInitInternal(rpmidxdb idxdb)
 {
     if (idxdb->xdb) {
 	unsigned int id;
-	if (rpmxdbFindBlob(idxdb->xdb, &id, idxdb->xdbtag, IDXDB_XDB_SUBTAG, 0))
-	    return RPMRC_FAIL;
-	if (id) {
+	int rc = rpmxdbLookupBlob(idxdb->xdb, &id, idxdb->xdbtag, IDXDB_XDB_SUBTAG, 0);
+	if (rc == RPMRC_OK && id) {
 	    idxdb->xdbid = id;
 	    return RPMRC_OK;	/* somebody else was faster */
 	}
+	if (rc && rc != RPMRC_NOTFOUND)
+	    return rc;
     } else {
 	struct stat stb; 
-	if (fstat(idxdb->fd, &stb))
+	if (stat(idxdb->filename, &stb))
 	    return RPMRC_FAIL;
-	if (stb.st_size)
-	    return RPMRC_OK;	/* somebody else was faster */
+	if (stb.st_size)	/* somebody else was faster */
+	    return rpmidxHandleObsolete(idxdb);
     }
     return rpmidxRebuildInternal(idxdb);
 }
@@ -960,12 +1004,18 @@ static int rpmidxLock(rpmidxdb idxdb, int excl)
 {
     if (excl && idxdb->rdonly)
 	return RPMRC_FAIL;
-    return rpmpkgLock(idxdb->pkgdb, excl);
+    if (idxdb->xdb)
+	return rpmxdbLock(idxdb->xdb, excl);
+    else
+	return rpmpkgLock(idxdb->pkgdb, excl);
 }
 
 static int rpmidxUnlock(rpmidxdb idxdb, int excl)
 {
-    return rpmpkgUnlock(idxdb->pkgdb, excl);
+    if (idxdb->xdb)
+	return rpmxdbUnlock(idxdb->xdb, excl);
+    else
+	return rpmpkgUnlock(idxdb->pkgdb, excl);
 }
 
 static int rpmidxLockReadHeader(rpmidxdb idxdb, int excl)
@@ -1035,10 +1085,14 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
     rpmidxdb idxdb;
     unsigned int id;
     *idxdbp = 0;
+    int rc;
     
     if (rpmxdbLock(xdb, 0))
 	return RPMRC_FAIL;
-    if (rpmxdbFindBlob(xdb, &id, xdbtag, IDXDB_XDB_SUBTAG, 0)) {
+    rc = rpmxdbLookupBlob(xdb, &id, xdbtag, IDXDB_XDB_SUBTAG, 0);
+    if (rc == RPMRC_NOTFOUND)
+	id = 0;
+    else if (rc) {
 	rpmxdbUnlock(xdb, 0);
 	return RPMRC_FAIL;
     }
@@ -1070,11 +1124,15 @@ int rpmidxOpenXdb(rpmidxdb *idxdbp, rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdb
 int rpmidxDelXdb(rpmpkgdb pkgdb, rpmxdb xdb, unsigned int xdbtag)
 {
     unsigned int id;
+    int rc;
     if (rpmxdbLock(xdb, 1))
 	return RPMRC_FAIL;
-    if (rpmxdbFindBlob(xdb, &id, xdbtag, IDXDB_XDB_SUBTAG, 0)) {
+    rc = rpmxdbLookupBlob(xdb, &id, xdbtag, IDXDB_XDB_SUBTAG, 0);
+    if (rc == RPMRC_NOTFOUND)
+	id = 0;
+    else if (rc) {
 	rpmxdbUnlock(xdb, 1);
-	return RPMRC_FAIL;
+	return rc;
     }
     if (id && rpmxdbDelBlob(xdb, id)) {
 	rpmxdbUnlock(xdb, 1);
