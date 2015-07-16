@@ -766,7 +766,7 @@ int rpmpkgUnlock(rpmpkgdb pkgdb, int excl)
     return RPMRC_OK;
 }
 
-int rpmpkgLockReadHeader(rpmpkgdb pkgdb, int excl)
+static int rpmpkgLockReadHeader(rpmpkgdb pkgdb, int excl)
 {
     if (rpmpkgLock(pkgdb, excl))
 	return RPMRC_FAIL;

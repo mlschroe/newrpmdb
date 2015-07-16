@@ -37,7 +37,7 @@ typedef struct rpmxdb_s {
 	unsigned int slotno;
 	unsigned int blobtag;
 	unsigned int subtag;
-	void *mapped;
+	unsigned char *mapped;
 	int mapflags;
 	unsigned int startpage;
 	unsigned int pagecnt;
@@ -106,7 +106,7 @@ static int mapslot(rpmxdb xdb, struct xdb_slot *slot)
     void *mapped;
     size_t off, size, shift;
 
-    if (!slot->mapcallback)
+    if (slot->mapped)
 	return RPMRC_FAIL;
     size = slot->pagecnt * xdb->pagesize;
     off = slot->startpage * xdb->pagesize;
@@ -120,14 +120,16 @@ static int mapslot(rpmxdb xdb, struct xdb_slot *slot)
     mapped = mmap(0, size, slot->mapflags, MAP_SHARED, xdb->fd, off);
     if (mapped == MAP_FAILED)
 	return RPMRC_FAIL;
-    slot->mapped = mapped + shift;
+    slot->mapped = (unsigned char *)mapped + shift;
     return RPMRC_OK;
 }
 
 static void unmapslot(rpmxdb xdb, struct xdb_slot *slot)
 {
     size_t size;
-    void *mapped = slot->mapped;
+    unsigned char *mapped = slot->mapped;
+    if (!mapped)
+	return;
     size = slot->pagecnt * xdb->pagesize;
     if (xdb->pagesize != xdb->systempagesize) {
 	size_t off = slot->startpage * xdb->pagesize;
@@ -144,8 +146,6 @@ static int remapslot(rpmxdb xdb, struct xdb_slot *slot, unsigned int newpagecnt)
 {
     void *mapped;
     size_t off, oldsize, newsize, shift;
-    if (!slot->mapcallback)
-	return RPMRC_FAIL;
     oldsize = slot->pagecnt * xdb->pagesize;
     newsize = newpagecnt * xdb->pagesize;
     off = slot->startpage * xdb->pagesize;
@@ -165,7 +165,7 @@ static int remapslot(rpmxdb xdb, struct xdb_slot *slot, unsigned int newpagecnt)
 	mapped = mmap(0, newsize, slot->mapflags, MAP_SHARED, xdb->fd, off);
     if (mapped == MAP_FAILED)
 	return RPMRC_FAIL;
-    slot->mapped = mapped + shift;
+    slot->mapped = (unsigned char *)mapped + shift;
     slot->pagecnt = newpagecnt;
     return RPMRC_OK;
 }
@@ -221,7 +221,7 @@ static int rpmxdbReadHeader(rpmxdb xdb)
     mapsize = slotnpages * pagesize;
     mapsize = (mapsize + xdb->systempagesize - 1) & ~(xdb->systempagesize - 1);
     xdb->mapped = mmap(0, mapsize, xdb->rdonly ? PROT_READ : PROT_READ | PROT_WRITE, MAP_SHARED, xdb->fd, 0);
-    if (xdb->mapped == MAP_FAILED) {
+    if ((void *)xdb->mapped == MAP_FAILED) {
 	xdb->mapped = 0;
 	return RPMRC_FAIL;
     }
@@ -1100,11 +1100,6 @@ int rpmxdbRenameBlob(rpmxdb xdb, unsigned int *idp, unsigned int blobtag, unsign
 	rpmxdbUpdateSlot(xdb, slot);
     }
     rpmxdbUnlock(xdb, 1);
-    return RPMRC_OK;
-}
-
-int rpmxdbFsyncBlob(rpmxdb xdb, unsigned int id)
-{
     return RPMRC_OK;
 }
 

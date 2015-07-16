@@ -208,6 +208,7 @@ static void rpmidxUnmap(rpmidxdb idxdb)
 
 static int rpmidxReadHeader(rpmidxdb idxdb);
 
+/* re-open file to get the new version */
 static int rpmidxHandleObsolete(rpmidxdb idxdb)
 {
     int nfd;
@@ -908,6 +909,7 @@ static int rpmidxListSort_cmp(const void *a, const void *b)
     return ((unsigned int *)a)[1] - ((unsigned int *)b)[1];
 }
 
+/* sort in hash offset order, so that we get sequential acceess */
 static void rpmidxListSort(rpmidxdb idxdb, unsigned int *keylist, unsigned int nkeylist, unsigned char *data)
 {
     unsigned int i, *arr;
