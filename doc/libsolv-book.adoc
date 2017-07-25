@@ -1,0 +1,13 @@
+The libsolv dependency solving library
+======================================
+
+:leveloffset: 1
+
+include::libsolv.txt[]
+
+include::libsolv-history.txt[]
+
+include::libsolv-constantids.txt[]
+
+include::libsolv-bindings.txt[]
+
